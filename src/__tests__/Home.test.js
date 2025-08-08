@@ -105,3 +105,5 @@ describe("Home 컴포넌트 입출고 기능", () => {
     expect(setLogs).toHaveBeenCalled();
   });
 });
+
+export { Home };
