@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { HashRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
+import { db, ref, set, onValue } from "./firebase";
 import * as XLSX from "xlsx";
 import "./App.css";
 
@@ -36,6 +37,10 @@ function getLocalInventory() {
 function saveLocalInventory(data) {
   localStorage.setItem("do-kkae-bi-inventory", JSON.stringify(data));
 }
+// 클라우드 저장 함수
+function saveInventoryToCloud(data) {
+  set(ref(db, "inventory/"), data);
+}
 function getLocalLogs() {
   const d = localStorage.getItem("do-kkae-bi-logs");
   return d ? JSON.parse(d) : [];
@@ -43,6 +48,11 @@ function getLocalLogs() {
 function saveLocalLogs(data) {
   localStorage.setItem("do-kkae-bi-logs", JSON.stringify(data));
 }
+// 클라우드 저장 함수
+function saveLogsToCloud(logs) {
+  set(ref(db, "logs/"), logs);
+}
+
 function getLocalAdmin() {
   return localStorage.getItem("do-kkae-bi-admin") === "true";
 }
@@ -56,7 +66,24 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
   const categoryRefs = useRef({});
 
   useEffect(() => saveLocalInventory(inventory), [inventory]);
+    useEffect(() => {
+  saveInventoryToCloud(inventory);
+}, [inventory]);
+
+useEffect(() => {
+  saveLogsToCloud(logs);
+}, [logs]);
+
   useEffect(() => saveLocalLogs(logs), [logs]);
+  useEffect(() => {
+  // 최초 1회: 파이어베이스에서 데이터 불러옴
+  onValue(ref(db, "inventory/"), (snapshot) => {
+    if (snapshot.exists()) setInventory(snapshot.val());
+  });
+  onValue(ref(db, "logs/"), (snapshot) => {
+    if (snapshot.exists()) setLogs(snapshot.val());
+  });
+}, []);
 
   function handleUpdateItemCount(loc, cat, sub, idx, delta) {
     if (!isAdmin || delta === 0) return;
