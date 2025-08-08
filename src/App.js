@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
+import { HashRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import "./App.css";
 
@@ -219,7 +219,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     <main
       className="app-main"
       style={{
-        backgroundImage: "url('/DRONE_SOCCER_DOKKEBI2-Photoroom.png')",
+        backgroundImage: `url(${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png)`,
         backgroundRepeat: "no-repeat",
         backgroundPosition: "center center",
         backgroundSize: "60vw auto",
@@ -229,7 +229,10 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       }}
     >
       <h1 style={{ textAlign: "center" }}>도깨비 드론축구단 재고관리</h1>
-      <div style={{ display: "flex", justifyContent: "center", gap: "1rem", alignItems: "center" }}>
+      <div 
+        className="toolbar"
+        style={{ display: "flex", justifyContent: "center", gap: "1rem", alignItems: "center" }}
+      >
         <input
           type="text"
           placeholder="검색..."
@@ -305,7 +308,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                   </li>
                 ))}
               </ul>
-              {/* 복사 버튼 추가 */}
               <div style={{ textAlign: "right", marginTop: "0.5rem" }}>
                 <button className="btn btn-default" onClick={() => {
                   const txt = aggregated
@@ -371,7 +373,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                                 key={idx}
                                 ref={el => {
                                   const refKey = `${loc}-${cat}-${sub}-${it.name}`;
-                                  // 중복 등록 방지
                                   if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
                                 }}
                                 style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}

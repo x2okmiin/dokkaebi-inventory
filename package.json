@@ -2,7 +2,7 @@
   "name": "dokkaebi-inventory",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://gizmo33.github.io/dokkaebi-inventory",
+  "homepage": "https://x2okmiin.github.io/dokkaebi-inventory",
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/user-event": "^13.5.0",

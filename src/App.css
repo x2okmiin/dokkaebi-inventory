@@ -14,7 +14,6 @@ html, body, #root, .app-main, input {
   padding: 2.5rem 1rem 4rem 1rem;
   /* 배경 이미지는 App.js에서 style로 관리 */
   /* background-image: ... (X) */
-  /* 나머지 스타일 유지 */
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
