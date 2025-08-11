@@ -70,17 +70,14 @@ function saveLogsToCloud(logs) {
 
 /* =======================
  * 공통: 고정 배경 레이어 컴포넌트
- * - 스크롤과 무관하게 화면을 항상 덮음 (background-attachment: fixed 대체)
- * - src: public 폴더의 파일을 process.env.PUBLIC_URL로 안전하게 참조
  * ======================= */
-// 고정 배경: 이미지 비율 유지, 자동 크기 + min/max 제어, 스크롤과 분리
 function FixedBg({
   src,
-  overlay = null,              // 예: "rgba(0,0,0,.2)" or null
-  maxW = "min(90vw, 1400px)",  // 가로 최대
-  maxH = "min(80vh, 900px)",   // 세로 최대
-  minW = "320px",              // 가로 최소
-  minH = "200px",              // 세로 최소
+  overlay = null,
+  maxW = "min(90vw, 1400px)",
+  maxH = "min(80vh, 900px)",
+  minW = "320px",
+  minH = "200px",
   opacity = 1
 }) {
   return (
@@ -93,8 +90,8 @@ function FixedBg({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          pointerEvents: "none",       // 클릭 막지 않도록
-          overflow: "hidden"           // 이미지가 너무 커질 때 잘림 방지용
+          pointerEvents: "none",
+          overflow: "hidden"
         }}
       >
         <img
@@ -107,7 +104,7 @@ function FixedBg({
             maxHeight: maxH,
             minWidth: minW,
             minHeight: minH,
-            objectFit: "contain",      // 비율 유지
+            objectFit: "contain",
             opacity
           }}
         />
@@ -136,29 +133,64 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
   const cardRefs = useRef({});
   const [syncing, setSyncing] = useState(false);
 
-  // 팝업(확대 보기) 상태: null | { kind: 'summary' } | { kind: 'loc', loc: string }
+  // 팝업(확대 보기) 상태
   const [openPanel, setOpenPanel] = useState(null);
 
-  /* --- 로컬/클라우드 동기화 --- */
-  useEffect(() => saveLocalInventory(inventory), [inventory]);
-  useEffect(() => saveInventoryToCloud(inventory), [inventory]);
-  useEffect(() => saveLocalLogs(logs), [logs]);
-  useEffect(() => saveLogsToCloud(logs), [logs]);
+  // 🔒 파이어베이스 핑퐁 방지 플래그 & 디바운스 타이머 (렌더 사이 유지)
+  const cloudInv = useRef(false);
+  const cloudLogs = useRef(false);
+  const invSaveTimer = useRef(null);
+  const logSaveTimer = useRef(null);
 
-  /* --- (가시적인) 동기화 인디케이터 --- */
+  /* --- 로컬/클라우드 동기화 (가드 + 디바운스) --- */
   useEffect(() => {
+    // 로컬 저장은 항상
+    saveLocalInventory(inventory);
+    // 구독 반영이 아닐 때만, 400ms 디바운스 후 클라우드 저장
+    if (!cloudInv.current) {
+      if (invSaveTimer.current) clearTimeout(invSaveTimer.current);
+      invSaveTimer.current = setTimeout(() => saveInventoryToCloud(inventory), 400);
+    }
+    // 동기화 뱃지
     setSyncing(true);
     const t = setTimeout(() => setSyncing(false), 700);
     return () => clearTimeout(t);
-  }, [inventory, logs]);
+  }, [inventory]);
+
+  useEffect(() => {
+    saveLocalLogs(logs);
+    if (!cloudLogs.current) {
+      if (logSaveTimer.current) clearTimeout(logSaveTimer.current);
+      logSaveTimer.current = setTimeout(() => saveLogsToCloud(logs), 400);
+    }
+    setSyncing(true);
+    const t = setTimeout(() => setSyncing(false), 700);
+    return () => clearTimeout(t);
+  }, [logs]);
 
   /* --- Firebase 구독 (1회) --- */
   useEffect(() => {
     const invRef = ref(db, "inventory/");
     const logRef = ref(db, "logs/");
-    const unsubInv = onValue(invRef, (s) => { if (s.exists()) setInventory(s.val()); });
-    const unsubLog = onValue(logRef, (s) => { if (s.exists()) setLogs(s.val()); });
-    return () => { unsubInv(); unsubLog(); };
+    const unsubInv = onValue(invRef, (s) => {
+      if (s.exists()) {
+        cloudInv.current = true;
+        setInventory(s.val());
+        // 다음 틱에서 플래그 해제
+        setTimeout(() => (cloudInv.current = false), 0);
+      }
+    });
+    const unsubLog = onValue(logRef, (s) => {
+      if (s.exists()) {
+        cloudLogs.current = true;
+        setLogs(s.val());
+        setTimeout(() => (cloudLogs.current = false), 0);
+      }
+    });
+    return () => {
+      unsubInv();
+      unsubLog();
+    };
   }, [setInventory, setLogs]);
 
   /* --- 팝업 열릴 때 해당 카드로 자동 스크롤 --- */
@@ -186,7 +218,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
               품목명: item.name,
               수량: item.count,
             });
-            // 합계
             if (!itemTotals[item.name]) itemTotals[item.name] = { 합계: 0, 장소별: {} };
             itemTotals[item.name].합계 += item.count;
             itemTotals[item.name].장소별[loc] = (itemTotals[item.name].장소별[loc] || 0) + item.count;
@@ -220,7 +251,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     XLSX.writeFile(wb, "재고현황.xlsx");
   }
 
-  /* ====== 수량 증감(자정 1시간 병합) ====== */
+  /* ====== 수량 증감(1시간 병합) ====== */
   function handleUpdateItemCount(loc, cat, sub, idx, delta) {
     if (!isAdmin || delta === 0) return;
     const itemName = inventory[loc][cat][sub][idx]?.name;
@@ -268,15 +299,15 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
-  /* ====== 품목 이름 수정 ====== */
+  /* ====== 품목 이름 수정 (동일 카테고리/하위, 전체 장소 일괄 변경) ====== */
   function handleEditItemName(loc, cat, sub, idx) {
     if (!isAdmin) return;
     const oldName = inventory[loc][cat][sub][idx].name;
-    const newName = prompt("새 품목명을 입력하세요:", oldName);
+    const newName = prompt("새 품목명을 입력하세요:", oldName)?.trim();
     if (!newName || newName === oldName) return;
+
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
-      // 동일 카테고리/하위카테고리 내 전체 장소에 일괄 적용
       locations.forEach((L) => {
         inv[L][cat][sub] = inv[L][cat][sub].map((item) =>
           item.name === oldName ? { ...item, name: newName } : item
@@ -299,17 +330,23 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
-  /* ====== 신규 품목 추가 ====== */
+  /* ====== 신규 품목 추가 (전 위치 중복 방지) ====== */
   function handleAddNewItem(loc) {
     if (!isAdmin) return;
     const cat = prompt("상위 카테고리 선택:\n" + Object.keys(subcategories).join(", "));
     if (!cat || !subcategories[cat]) return toast.error("올바른 카테고리가 아닙니다.");
     const sub = prompt("하위 카테고리 선택:\n" + subcategories[cat].join(", "));
     if (!sub || !subcategories[cat].includes(sub)) return toast.error("올바른 하위카테고리가 아닙니다.");
-    const name = prompt("추가할 품목명:");
+    const name = prompt("추가할 품목명:")?.trim();
     if (!name) return;
     const count = Number(prompt("초기 수량 입력:"));
     if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
+
+    // 중복 검사: 전 위치/같은 카테고리/하위에 동일 이름이 있으면 취소
+    const exists = locations.some(L =>
+      (inventory[L]?.[cat]?.[sub] || []).some(it => it.name === name)
+    );
+    if (exists) return toast.error("이미 존재하는 품목입니다.");
 
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
@@ -322,12 +359,10 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
-  /* ====== 품목 전체 삭제(이름으로)
-   * 주의: 이 기능은 '전체' 카드의 삭제 버튼에서만 노출됩니다.
-   */
+  /* ====== 품목 전체 삭제(이름으로) ====== */
   function handleDeleteItem() {
     if (!isAdmin) return;
-    const name = prompt("삭제할 품목 이름을 입력하세요:");
+    const name = prompt("삭제할 품목 이름을 입력하세요:")?.trim();
     if (!name) return;
 
     // 존재/합계 확인
@@ -425,16 +460,16 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
   /* ====== UI ====== */
   return (
     <main className="app-main fade-in">
-      {/* ✅ 메인 고정 배경 (스크롤과 독립/화면비 맞춤) */}
-<FixedBg
-  src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`}
-  overlay="rgba(0,0,0,.18)"
-  maxW="min(85vw, 1200px)"     // 원하는 값으로 쉽게 조절 가능
-  maxH="min(70vh, 800px)"
-  minW="360px"
-  minH="220px"
-  opacity={0.9}
-/>
+      {/* ✅ 메인 고정 배경 */}
+      <FixedBg
+        src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`}
+        overlay="rgba(0,0,0,.18)"
+        maxW="min(85vw, 1200px)"
+        maxH="min(70vh, 800px)"
+        minW="360px"
+        minH="220px"
+        opacity={0.9}
+      />
 
       {/* 동기화 표시 */}
       {syncing && (
@@ -543,8 +578,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         </div>
       )}
 
-      {/* ===== ㅜ 레이아웃 ===== */}
-      {/* 위: 장소 카드 그리드 (가운데 정렬, 고정 높이로 주변 영향 최소화) */}
+      {/* 장소 카드 그리드 */}
       <div className="cards-grid">
         {locations.map((loc) => (
           <div
@@ -608,7 +642,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         ))}
       </div>
 
-      {/* 아래: 전체 요약 박스 (중앙, 폭 축소 / 헤더만 클릭 시 팝업) */}
+      {/* 전체 요약 */}
       <section className="summary-bottom">
         <div
           className="card summary-card"
@@ -655,7 +689,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         </div>
       </section>
 
-      {/* ===== 팝업(확대 보기) 오버레이 ===== */}
+      {/* 팝업(확대 보기) */}
       {openPanel && (
         <div className="overlay" onClick={() => setOpenPanel(null)}>
           <div className="popup-card pop-in" onClick={(e) => e.stopPropagation()}>
@@ -806,9 +840,6 @@ function LogsPage({ logs, setLogs }) {
 
   return (
     <main className="app-main logs-container" style={{ minHeight: "100vh" }}>
-
-
-      {/* 상단 헤더: 왼쪽 돌아가기, 가운데 큰 제목, 오른쪽 컨트롤 */}
       <div className="logs-header">
         <button className="btn btn-default back-btn" onClick={() => navigate("/")}>← 돌아가기</button>
         <h1 className="logs-title">📘 입출고 기록</h1>
@@ -869,20 +900,20 @@ export default function AppWrapper() {
   const isAdmin = getLocalAdmin();
 
   // 로그인 라우트용 래퍼: 로그인 배경을 white.png로 고정
-const LoginShell = ({ children }) => (
-  <div style={{ position: "relative", minHeight: "100vh" }}>
-    <FixedBg
-      src={`${process.env.PUBLIC_URL}/white.png`}
-      overlay={null}                 // 덮개 필요 없으면 null
-      maxW="min(70vw, 900px)"
-      maxH="min(65vh, 700px)"
-      minW="300px"
-      minH="180px"
-      opacity={1}
-    />
-    <div style={{ position: "relative", zIndex: 0 }}>{children}</div>
-  </div>
-);
+  const LoginShell = ({ children }) => (
+    <div style={{ position: "relative", minHeight: "100vh" }}>
+      <FixedBg
+        src={`${process.env.PUBLIC_URL}/white.png`}
+        overlay={null}
+        maxW="min(70vw, 900px)"
+        maxH="min(65vh, 700px)"
+        minW="300px"
+        minH="180px"
+        opacity={1}
+      />
+      <div style={{ position: "relative", zIndex: 0 }}>{children}</div>
+    </div>
+  );
 
   return (
     <>
@@ -911,7 +942,6 @@ const LoginShell = ({ children }) => (
                 <LoginShell>
                   <LoginPage
                     onLogin={(pw) => {
-                      // 비밀번호는 여기서 검사
                       if (pw === "2500") {
                         saveLocalAdmin(true);
                         window.location.reload();
