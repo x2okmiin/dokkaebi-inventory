@@ -3,40 +3,52 @@ import React, { useState } from "react";
 
 export default function LoginPage({ onLogin }) {
   const [pw, setPw] = useState("");
+  const [show, setShow] = useState(false);
 
-  function submit(e) {
-    e?.preventDefault();
-    onLogin?.(pw.trim());
-  }
-//세부 이미지 변경 등은 App.js에서 가능
+  const submit = (e) => {
+    e.preventDefault();
+    onLogin?.(pw);
+  };
+
   return (
-    <main
-      className="app-main fade-in"
-    >
-      <div style={{ maxWidth: 480, margin: "8vh auto 0", width: "92%" }}>
-        <div className="card" style={{ padding: 24 }}>
-          <h1 className="dk-main-title" style={{ marginBottom: 8 }}>도깨비 드론축구단</h1>
-          <h2 style={{ margin: "0 0 18px", fontSize: "1.25rem", fontWeight: 800, color: "#2dd4bf" }}>
-            관계자 로그인
-          </h2>
-          <form onSubmit={submit}>
+    <div className="login-wrap fade-in">
+      <div className="login-card">
+        <h1 className="dk-main-title" style={{ textAlign: "center", marginBottom: "0.75rem" }}>
+          도깨비 인벤토리
+        </h1>
+        <p className="login-sub">관리자 모드로 들어가려면 비밀번호를 입력해줘</p>
+
+        <form onSubmit={submit} className="login-form">
+          <label className="login-label">비밀번호</label>
+          <div className="login-input-row">
             <input
-              type="password"
-              placeholder="비밀번호를 입력하세요"
+              className="login-input"
+              type={show ? "text" : "password"}
               value={pw}
               onChange={(e) => setPw(e.target.value)}
-              style={{ width: "100%", height: 44, padding: "0 12px", borderRadius: 10, border: "1.5px solid #334155", background: "#232943", color: "#fff" }}
+              placeholder="••••"
+              autoFocus
             />
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button className="btn btn-default" type="submit" style={{ flex: 1 }}>🔑 로그인</button>
-              <button className="btn btn-outline" type="button" onClick={() => setPw("")}>지우기</button>
-            </div>
-            <p style={{ color: "#9ca3af", fontSize: 13, marginTop: 10 }}>
-              동아리방 비번을 입력하시오. (추후 변경시 교체!)
-            </p>
-          </form>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => setShow((v) => !v)}
+              title={show ? "숨기기" : "보기"}
+            >
+              {show ? "🙈" : "👁️"}
+            </button>
+          </div>
+
+          <button type="submit" className="btn btn-default login-submit">
+            🔑 로그인
+          </button>
+        </form>
+
+        <div className="login-help">
+          <div>• 일반 열람은 비번 없이 가능</div>
+          <div>• 관리자 전환 시 모든 편집/동기화 기능 활성화</div>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

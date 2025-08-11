@@ -1,14 +1,14 @@
 // src/App.js
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { HashRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
-import { db, ref, set, onValue } from "./firebase";
 import * as XLSX from "xlsx";
 import "./App.css";
-import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
+import LoginPage from "./LoginPage";
+import { db, ref, set, onValue } from "./firebase";
 
 /* =======================
- * 상수 정의
+ * 상수
  * ======================= */
 const locations = ["동아리방", "비행장", "교수님방"];
 const subcategories = {
@@ -25,41 +25,44 @@ const subcategories = {
 /* =======================
  * localStorage helpers
  * ======================= */
-function getLocalInventory() {
-  const d = localStorage.getItem("do-kkae-bi-inventory");
-  if (d) return JSON.parse(d);
-  // 기본 구조 생성
+const LS_INV = "do-kkae-bi-inventory";
+const LS_LOG = "do-kkae-bi-logs";
+const LS_ADM = "do-kkae-bi-admin";
+
+function newBaseInventory() {
   const base = {};
   locations.forEach((loc) => {
     base[loc] = {};
-    Object.keys(subcategories).forEach((cat) => {
+    Object.entries(subcategories).forEach(([cat, subs]) => {
       base[loc][cat] = {};
-      subcategories[cat].forEach((sub) => {
-        base[loc][cat][sub] = [];
-      });
+      subs.forEach((sub) => (base[loc][cat][sub] = []));
     });
   });
   return base;
 }
+function getLocalInventory() {
+  const d = localStorage.getItem(LS_INV);
+  return d ? JSON.parse(d) : newBaseInventory();
+}
 function saveLocalInventory(data) {
-  localStorage.setItem("do-kkae-bi-inventory", JSON.stringify(data));
+  localStorage.setItem(LS_INV, JSON.stringify(data));
 }
 function getLocalLogs() {
-  const d = localStorage.getItem("do-kkae-bi-logs");
+  const d = localStorage.getItem(LS_LOG);
   return d ? JSON.parse(d) : [];
 }
 function saveLocalLogs(data) {
-  localStorage.setItem("do-kkae-bi-logs", JSON.stringify(data));
+  localStorage.setItem(LS_LOG, JSON.stringify(data));
 }
 function getLocalAdmin() {
-  return localStorage.getItem("do-kkae-bi-admin") === "true";
+  return localStorage.getItem(LS_ADM) === "true";
 }
 function saveLocalAdmin(val) {
-  localStorage.setItem("do-kkae-bi-admin", val ? "true" : "false");
+  localStorage.setItem(LS_ADM, val ? "true" : "false");
 }
 
 /* =======================
- * Firebase helpers (간단 저장/구독)
+ * Firebase helpers
  * ======================= */
 function saveInventoryToCloud(data) {
   set(ref(db, "inventory/"), data);
@@ -69,7 +72,7 @@ function saveLogsToCloud(logs) {
 }
 
 /* =======================
- * 공통: 고정 배경 레이어 컴포넌트
+ * 공통: 고정 배경
  * ======================= */
 function FixedBg({
   src,
@@ -125,35 +128,67 @@ function FixedBg({
 }
 
 /* =======================
+ * 버튼 리플 이펙트 훅 (터치/마우스 공통)
+ * ======================= */
+function useRipple() {
+  useEffect(() => {
+    function createRipple(e) {
+      const target = e.target.closest(".btn");
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      const ripple = document.createElement("span");
+      ripple.className = "ripple-anim";
+      const size = Math.max(rect.width, rect.height);
+      const x = (e.clientX ?? (e.touches?.[0]?.clientX || 0)) - rect.left - size / 2;
+      const y = (e.clientY ?? (e.touches?.[0]?.clientY || 0)) - rect.top - size / 2;
+      ripple.style.width = ripple.style.height = `${size}px`;
+      ripple.style.left = `${x}px`;
+      ripple.style.top = `${y}px`;
+      target.appendChild(ripple);
+      setTimeout(() => ripple.remove(), 550);
+    }
+    document.addEventListener("click", createRipple);
+    document.addEventListener("touchstart", createRipple, { passive: true });
+    return () => {
+      document.removeEventListener("click", createRipple);
+      document.removeEventListener("touchstart", createRipple);
+    };
+  }, []);
+}
+
+/* =======================
  * Home
  * ======================= */
 function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLogs, isAdmin }) {
   const navigate = useNavigate();
+  useRipple();
+
   const categoryRefs = useRef({});
   const cardRefs = useRef({});
+
+  // 데이터 메뉴 (Export/Import) 상태
+  const [dataMenuOpen, setDataMenuOpen] = useState(false);
+  //const fileInputRef = useRef(null);
   const [syncing, setSyncing] = useState(false);
 
-  // 팝업(확대 보기) 상태
+  // 팝업(확대 보기)
   const [openPanel, setOpenPanel] = useState(null);
 
-  // 🔒 파이어베이스 핑퐁 방지 플래그 & 디바운스 타이머 (렌더 사이 유지)
+  // 🔒 파이어베이스 핑퐁 방지 + 저장 디바운스
   const cloudInv = useRef(false);
   const cloudLogs = useRef(false);
   const invSaveTimer = useRef(null);
   const logSaveTimer = useRef(null);
 
-  /* --- 로컬/클라우드 동기화 (가드 + 디바운스) --- */
+  /* --- 동기화: 로컬 저장 + (클라우드 디바운스 저장) --- */
   useEffect(() => {
-    // 로컬 저장은 항상
     saveLocalInventory(inventory);
-    // 구독 반영이 아닐 때만, 400ms 디바운스 후 클라우드 저장
     if (!cloudInv.current) {
       if (invSaveTimer.current) clearTimeout(invSaveTimer.current);
-      invSaveTimer.current = setTimeout(() => saveInventoryToCloud(inventory), 400);
+      invSaveTimer.current = setTimeout(() => saveInventoryToCloud(inventory), 350);
     }
-    // 동기화 뱃지
     setSyncing(true);
-    const t = setTimeout(() => setSyncing(false), 700);
+    const t = setTimeout(() => setSyncing(false), 650);
     return () => clearTimeout(t);
   }, [inventory]);
 
@@ -161,10 +196,10 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     saveLocalLogs(logs);
     if (!cloudLogs.current) {
       if (logSaveTimer.current) clearTimeout(logSaveTimer.current);
-      logSaveTimer.current = setTimeout(() => saveLogsToCloud(logs), 400);
+      logSaveTimer.current = setTimeout(() => saveLogsToCloud(logs), 350);
     }
     setSyncing(true);
-    const t = setTimeout(() => setSyncing(false), 700);
+    const t = setTimeout(() => setSyncing(false), 650);
     return () => clearTimeout(t);
   }, [logs]);
 
@@ -176,7 +211,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       if (s.exists()) {
         cloudInv.current = true;
         setInventory(s.val());
-        // 다음 틱에서 플래그 해제
         setTimeout(() => (cloudInv.current = false), 0);
       }
     });
@@ -193,17 +227,15 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     };
   }, [setInventory, setLogs]);
 
-  /* --- 팝업 열릴 때 해당 카드로 자동 스크롤 --- */
+  /* --- 팝업 열릴 때 해당 카드로 스크롤 --- */
   useEffect(() => {
     if (!openPanel) return;
     const key = openPanel.kind === "summary" ? "summary" : openPanel.loc;
     const el = cardRefs.current[key];
-    if (el && el.scrollIntoView) {
-      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-    }
+    if (el?.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
   }, [openPanel]);
 
-  /* ====== 재고 엑셀 내보내기 ====== */
+  /* ====== 내보내기: 재고 엑셀 ====== */
   function exportInventoryExcel() {
     const rows = [];
     const itemTotals = {};
@@ -217,6 +249,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
               하위카테고리: sub,
               품목명: item.name,
               수량: item.count,
+              메모: item.note || ""
             });
             if (!itemTotals[item.name]) itemTotals[item.name] = { 합계: 0, 장소별: {} };
             itemTotals[item.name].합계 += item.count;
@@ -238,17 +271,50 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     rows.push({});
     rows.push({ 품목명: "=== 품목별 전체 합계 ===" });
     Object.entries(itemTotals).forEach(([name, info]) => {
-      rows.push({
-        품목명: name,
-        총합계: info.합계,
-        ...info.장소별,
-      });
+      rows.push({ 품목명: name, 총합계: info.합계, ...info.장소별 });
     });
 
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "재고현황");
     XLSX.writeFile(wb, "재고현황.xlsx");
+    toast.success("재고 Excel 내보내기 완료");
+  }
+
+  /* ====== 가져오기: CSV/XLSX 업로드 ====== */
+  function handleFilePicked(file) {
+    if (!file) return;
+    if (!window.confirm("⚠️ 현재 재고를 덮어쓰시겠습니까?")) return;
+    const rd = new FileReader();
+    rd.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: "binary" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws);
+        const inv = newBaseInventory();
+        data.forEach((r) => {
+          const loc = r["장소"], cat = r["상위카테고리"], sub = r["하위카테고리"];
+          const nm = r["품목명"], cnt = Number(r["수량"] || 0), note = r["메모"] || "";
+          if (locations.includes(loc) && subcategories[cat]?.includes(sub) && nm) {
+            inv[loc][cat][sub].push({ name: nm, count: Math.max(0, cnt), note });
+          }
+        });
+        setInventory(inv);
+        toast.success("가져오기 완료");
+      } catch (err) {
+        console.error(err);
+        toast.error("가져오기 실패: 파일 형식을 확인해주세요.");
+      }
+    };
+    rd.readAsBinaryString(file);
+  }
+  function triggerImport() {
+    if (!isAdmin) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.xlsx";
+    input.onchange = (e) => handleFilePicked(e.target.files?.[0]);
+    input.click();
   }
 
   /* ====== 수량 증감(1시간 병합) ====== */
@@ -257,7 +323,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     const itemName = inventory[loc][cat][sub][idx]?.name;
     if (!itemName) return;
 
-    // 재고 반영
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
       const it = inv[loc][cat][sub][idx];
@@ -265,46 +330,36 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       return inv;
     });
 
-    // 로그 병합
     const now = new Date();
     const ts = now.toISOString();
     const time = now.toLocaleString();
     const key = `${loc}|${cat}|${sub}|${itemName}|${delta > 0 ? "IN" : "OUT"}`;
     setLogs((prev) => {
       const arr = [...prev];
-      const mergeIdx = arr.findIndex(
-        (l) => l.key === key && now - new Date(l.ts) < 60 * 60 * 1000
-      );
+      const mergeIdx = arr.findIndex((l) => l.key === key && now - new Date(l.ts) < 60 * 60 * 1000);
       if (mergeIdx > -1) {
-        arr[mergeIdx] = {
-          ...arr[mergeIdx],
-          change: arr[mergeIdx].change + delta,
-          time,
-          ts,
-        };
+        arr[mergeIdx] = { ...arr[mergeIdx], change: arr[mergeIdx].change + delta, time, ts };
       } else {
         arr.unshift({
-          key,
-          location: loc,
-          category: cat,
-          subcategory: sub,
-          item: itemName,
-          change: delta,
-          reason: "입출고",
-          time,
-          ts,
+          key, location: loc, category: cat, subcategory: sub,
+          item: itemName, change: delta, reason: "입출고", time, ts
         });
       }
       return arr;
     });
   }
 
-  /* ====== 품목 이름 수정 (동일 카테고리/하위, 전체 장소 일괄 변경) ====== */
+  /* ====== 이름/메모/추가/삭제 ====== */
   function handleEditItemName(loc, cat, sub, idx) {
     if (!isAdmin) return;
     const oldName = inventory[loc][cat][sub][idx].name;
     const newName = prompt("새 품목명을 입력하세요:", oldName)?.trim();
     if (!newName || newName === oldName) return;
+
+    const exists = locations.some((L) =>
+      (inventory[L]?.[cat]?.[sub] || []).some((it) => it.name === newName)
+    );
+    if (exists) return toast.error("해당 카테고리/하위에 같은 이름이 이미 있어요(전 위치).");
 
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
@@ -317,7 +372,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
-  /* ====== 품목 메모 ====== */
   function handleEditItemNote(loc, cat, sub, idx) {
     if (!isAdmin) return;
     setInventory((prev) => {
@@ -330,7 +384,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
-  /* ====== 신규 품목 추가 (전 위치 중복 방지) ====== */
   function handleAddNewItem(loc) {
     if (!isAdmin) return;
     const cat = prompt("상위 카테고리 선택:\n" + Object.keys(subcategories).join(", "));
@@ -342,11 +395,10 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     const count = Number(prompt("초기 수량 입력:"));
     if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
 
-    // 중복 검사: 전 위치/같은 카테고리/하위에 동일 이름이 있으면 취소
-    const exists = locations.some(L =>
-      (inventory[L]?.[cat]?.[sub] || []).some(it => it.name === name)
+    const duplicate = locations.some((L) =>
+      (inventory[L]?.[cat]?.[sub] || []).some((it) => it.name === name)
     );
-    if (exists) return toast.error("이미 존재하는 품목입니다.");
+    if (duplicate) return toast.error("이미 같은 이름의 품목이 존재합니다(전 위치).");
 
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
@@ -359,13 +411,11 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
-  /* ====== 품목 전체 삭제(이름으로) ====== */
   function handleDeleteItem() {
     if (!isAdmin) return;
     const name = prompt("삭제할 품목 이름을 입력하세요:")?.trim();
     if (!name) return;
 
-    // 존재/합계 확인
     let totalCount = 0;
     locations.forEach((L) => {
       Object.keys(inventory[L]).forEach((cat) => {
@@ -378,7 +428,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
     if (totalCount === 0) return toast.error("해당 품목이 존재하지 않습니다.");
 
-    // 삭제 반영
     setInventory((prev) => {
       const newInv = JSON.parse(JSON.stringify(prev));
       locations.forEach((L) => {
@@ -391,10 +440,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       return newInv;
     });
 
-    // 로그 기록
-    const now = new Date(),
-      ts = now.toISOString(),
-      time = now.toLocaleString();
+    const now = new Date(), ts = now.toISOString(), time = now.toLocaleString();
     setLogs((prev) => [
       {
         key: `전체||${name}|OUT`,
@@ -405,13 +451,13 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         change: -totalCount,
         reason: "해당 품목은 총괄 삭제됨",
         time,
-        ts,
+        ts
       },
-      ...prev,
+      ...prev
     ]);
   }
 
-  /* ====== 검색 / 결과 집계 ====== */
+  /* ====== 검색 / 집계 ====== */
   const filtered = useMemo(
     () =>
       Object.entries(inventory).flatMap(([loc, cats]) =>
@@ -439,7 +485,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
   /* ====== 검색 결과 클릭 → 해당 위치로 펼치고 스크롤 ====== */
   function scrollToCategory(loc, cat, sub, itemName) {
-    // 같은 장소의 다른 섹션 닫기
     Object.keys(categoryRefs.current).forEach((k) => {
       if (k.startsWith(`${loc}-`)) {
         const el = categoryRefs.current[k];
@@ -460,15 +505,15 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
   /* ====== UI ====== */
   return (
     <main className="app-main fade-in">
-      {/* ✅ 메인 고정 배경 */}
+      {/* 배경 */}
       <FixedBg
         src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`}
-        overlay="rgba(0,0,0,.18)"
-        maxW="min(85vw, 1200px)"
-        maxH="min(70vh, 800px)"
+        overlay="rgba(0,0,0,.16)"
+        maxW="min(86vw, 1260px)"
+        maxH="min(72vh, 820px)"
         minW="360px"
         minH="220px"
-        opacity={0.9}
+        opacity={0.92}
       />
 
       {/* 동기화 표시 */}
@@ -478,7 +523,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         </div>
       )}
 
-      <h1 className="dk-main-title" style={{ textAlign: "center", marginTop: "0.5rem" }}>
+      <h1 className="dk-main-title title-pulse" style={{ textAlign: "center", marginTop: "0.5rem" }}>
         도깨비 드론축구단 재고관리
       </h1>
 
@@ -490,10 +535,11 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           placeholder="검색..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
+          aria-label="검색"
         />
-        <button className="btn btn-default" onClick={() => navigate("/logs")}>
-          📘 기록
-        </button>
+
+        <button className="btn btn-default" onClick={() => navigate("/logs")}>📘 기록</button>
+
         {!isAdmin ? (
           <button
             className="btn btn-default"
@@ -513,16 +559,32 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           <>
             <button
               className="btn btn-default"
-              onClick={() => {
-                saveLocalAdmin(false);
-                window.location.reload();
-              }}
+              onClick={() => { saveLocalAdmin(false); window.location.reload(); }}
             >
               🚪 로그아웃
             </button>
-            <button className="btn btn-default" onClick={exportInventoryExcel}>
-              📤 재고 Excel
-            </button>
+
+            {/* 📦 데이터 통합 버튼 */}
+            <div className="data-menu-wrap">
+              <button
+                className="btn btn-default"
+                onClick={() => setDataMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={dataMenuOpen}
+              >
+                📦 데이터
+              </button>
+              {dataMenuOpen && (
+                <div className="data-menu" role="menu" onMouseLeave={() => setDataMenuOpen(false)}>
+                  <button className="menu-item" role="menuitem" onClick={() => { setDataMenuOpen(false); exportInventoryExcel(); }}>
+                    📤 재고 Excel 내보내기
+                  </button>
+                  <button className="menu-item" role="menuitem" onClick={() => { setDataMenuOpen(false); triggerImport(); }}>
+                    --⤴️ CSV/XLSX 가져오기-- 미완
+                  </button>
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>
@@ -532,7 +594,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         <div className="search-result" style={{ margin: "10px auto" }}>
           <h3 style={{ margin: 0, marginBottom: 6 }}>🔍 검색 결과</h3>
           {aggregated.length === 0 ? (
-            <p style={{ color: "#9ca3af" }}>검색된 결과가 없습니다.</p>
+            <p className="muted">검색된 결과가 없습니다.</p>
           ) : (
             <>
               <ul style={{ listStyle: "disc inside" }}>
@@ -541,12 +603,12 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                     <div onClick={() => scrollToCategory("전체", e.cat, e.sub, e.name)} style={{ cursor: "pointer" }}>
                       [{e.cat} &gt; {e.sub}] {e.name} (총 {e.total}개)
                     </div>
-                    <div style={{ fontSize: "13px", color: "#9ca3af", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    <div className="search-loc-row">
                       {locations.map((L) => (
                         <span
                           key={L}
                           onClick={() => scrollToCategory(L, e.cat, e.sub, e.name)}
-                          style={{ cursor: "pointer", textDecoration: "underline" }}
+                          className="search-loc-link"
                         >
                           {L}: {e.locs[L] || 0}
                         </span>
@@ -586,17 +648,10 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
             className="card fixed"
             ref={(el) => { if (el) cardRefs.current[loc] = el; }}
           >
-            <div
-              className="card-head"
-              onClick={() => setOpenPanel({ kind: "loc", loc })}
-              style={{ cursor: "zoom-in" }}
-            >
+            <div className="card-head" onClick={() => setOpenPanel({ kind: "loc", loc })} style={{ cursor: "zoom-in" }}>
               <h2>{loc}</h2>
               {isAdmin && (
-                <button
-                  className="btn btn-default"
-                  onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}
-                >
+                <button className="btn btn-default" onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}>
                   +추가
                 </button>
               )}
@@ -609,25 +664,31 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                   {subs.map((sub) => (
                     <details key={sub} ref={(el) => { if (el) categoryRefs.current[`${loc}-${cat}-${sub}`] = el; }} style={{ marginLeft: 8 }}>
                       <summary>▸ {sub}</summary>
-                      <ul style={{ marginLeft: 6 }}>
+                      <ul className="item-list">
                         {(inventory[loc]?.[cat]?.[sub] || []).map((it, idx) => (
                           <li
                             key={idx}
+                            className="item-row"
                             ref={(el) => {
                               const refKey = `${loc}-${cat}-${sub}-${it.name}`;
                               if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
                             }}
                           >
-                            <div>
-                              <span>{it.name} ({it.count}개)</span>
-                              {it.note && <div style={{ fontSize: 12, color: "#999" }}>특이사항: {it.note}</div>}
+                            {/* 텍스트 블록 (항상 앞줄/왼쪽, 줄바꿈 우선) */}
+                            <div className="item-text">
+                              <div className="item-name">
+                                {it.name} <span className="item-count">({it.count}개)</span>
+                              </div>
+                              {it.note && <div className="item-note">특이사항: {it.note}</div>}
                             </div>
+
+                            {/* 액션 블록 (좁은 화면에선 자동으로 다음 줄로 감김) */}
                             {isAdmin && (
-                              <div style={{ display: "flex", gap: 6 }}>
-                                <button className="btn" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋</button>
-                                <button className="btn" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－</button>
-                                <button className="btn" onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
-                                <button className="btn" onClick={(e) => { e.stopPropagation(); handleEditItemNote(loc, cat, sub, idx); }}>📝 메모</button>
+                              <div className="item-actions">
+                                <button className="btn btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋</button>
+                                <button className="btn btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－</button>
+                                <button className="btn btn-compact" onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
+                                <button className="btn btn-compact" onClick={(e) => { e.stopPropagation(); handleEditItemNote(loc, cat, sub, idx); }}>📝 메모</button>
                               </div>
                             )}
                           </li>
@@ -644,21 +705,11 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
       {/* 전체 요약 */}
       <section className="summary-bottom">
-        <div
-          className="card summary-card"
-          ref={(el) => { if (el) cardRefs.current["summary"] = el; }}
-        >
-          <div
-            className="card-head"
-            onClick={() => setOpenPanel({ kind: "summary" })}
-            style={{ cursor: "zoom-in" }}
-          >
+        <div className="card summary-card" ref={(el) => { if (el) cardRefs.current["summary"] = el; }}>
+          <div className="card-head" onClick={() => setOpenPanel({ kind: "summary" })} style={{ cursor: "zoom-in" }}>
             <h2>전체</h2>
             {isAdmin && (
-              <button
-                className="btn btn-destructive"
-                onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}
-              >
+              <button className="btn btn-destructive" onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}>
                 삭제
               </button>
             )}
@@ -671,14 +722,22 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                 {subs.map((sub) => (
                   <details key={sub} ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}`] = el; }} style={{ marginLeft: 8 }}>
                     <summary>▸ {sub}</summary>
-                    <ul style={{ marginLeft: 6 }}>
+                    <ul className="item-list">
                       {Object.entries(
                         locations.reduce((acc, L) => {
-                          (inventory[L]?.[cat]?.[sub] || []).forEach((it) => { acc[it.name] = (acc[it.name] || 0) + (it.count || 0); });
+                          (inventory[L]?.[cat]?.[sub] || []).forEach((it) => {
+                            acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
+                          });
                           return acc;
                         }, {})
                       ).map(([name, count]) => (
-                        <li key={name}><div><span>{name} ({count}개)</span></div></li>
+                        <li key={name} className="item-row">
+                          <div className="item-text">
+                            <div className="item-name">
+                              {name} <span className="item-count">({count}개)</span>
+                            </div>
+                          </div>
+                        </li>
                       ))}
                     </ul>
                   </details>
@@ -694,9 +753,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         <div className="overlay" onClick={() => setOpenPanel(null)}>
           <div className="popup-card pop-in" onClick={(e) => e.stopPropagation()}>
             <div className="popup-head">
-              <h3>
-                {openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}
-              </h3>
+              <h3>{openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}</h3>
               <button className="btn btn-outline" onClick={() => setOpenPanel(null)}>닫기</button>
             </div>
 
@@ -708,14 +765,22 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                     {subs.map((sub) => (
                       <details key={sub} open style={{ marginLeft: 8 }}>
                         <summary>▸ {sub}</summary>
-                        <ul style={{ marginLeft: 6 }}>
+                        <ul className="item-list">
                           {Object.entries(
                             locations.reduce((acc, L) => {
-                              (inventory[L]?.[cat]?.[sub] || []).forEach((it) => { acc[it.name] = (acc[it.name] || 0) + (it.count || 0); });
+                              (inventory[L]?.[cat]?.[sub] || []).forEach((it) => {
+                                acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
+                              });
                               return acc;
                             }, {})
                           ).map(([name, count]) => (
-                            <li key={name}><div><span>{name} ({count}개)</span></div></li>
+                            <li key={name} className="item-row">
+                              <div className="item-text">
+                                <div className="item-name">
+                                  {name} <span className="item-count">({count}개)</span>
+                                </div>
+                              </div>
+                            </li>
                           ))}
                         </ul>
                       </details>
@@ -729,19 +794,21 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                     {subs.map((sub) => (
                       <details key={sub} open style={{ marginLeft: 8 }}>
                         <summary>▸ {sub}</summary>
-                        <ul style={{ marginLeft: 6 }}>
+                        <ul className="item-list">
                           {(inventory[openPanel.loc]?.[cat]?.[sub] || []).map((it, idx) => (
-                            <li key={idx}>
-                              <div>
-                                <span>{it.name} ({it.count}개)</span>
-                                {it.note && <div style={{ fontSize: 12, color: "#999" }}>특이사항: {it.note}</div>}
+                            <li key={idx} className="item-row">
+                              <div className="item-text">
+                                <div className="item-name">
+                                  {it.name} <span className="item-count">({it.count}개)</span>
+                                </div>
+                                {it.note && <div className="item-note">특이사항: {it.note}</div>}
                               </div>
                               {isAdmin && (
-                                <div style={{ display: "flex", gap: 6 }}>
-                                  <button className="btn" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>＋</button>
-                                  <button className="btn" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>－</button>
-                                  <button className="btn" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>✎ 이름</button>
-                                  <button className="btn" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>📝 메모</button>
+                                <div className="item-actions">
+                                  <button className="btn btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>＋</button>
+                                  <button className="btn btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>－</button>
+                                  <button className="btn btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>✎ 이름</button>
+                                  <button className="btn btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>📝 메모</button>
                                 </div>
                               )}
                             </li>
@@ -765,23 +832,21 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
  * ======================= */
 function LogsPage({ logs, setLogs }) {
   const navigate = useNavigate();
-  const [filterDate, setFilterDate] = useState("");
 
   useEffect(() => saveLocalLogs(logs), [logs]);
 
+  const [filterDate, setFilterDate] = useState("");
   const sorted = useMemo(() => [...logs].sort((a, b) => new Date(b.ts) - new Date(a.ts)), [logs]);
   const filteredList = filterDate ? sorted.filter((l) => l.ts.slice(0, 10) === filterDate) : sorted;
 
   const grouped = useMemo(
-    () =>
-      filteredList.reduce((acc, l) => {
-        const day = l.ts.slice(0, 10);
-        (acc[day] = acc[day] || []).push(l);
-        return acc;
-      }, {}),
+    () => filteredList.reduce((acc, l) => {
+      const day = l.ts.slice(0, 10);
+      (acc[day] = acc[day] || []).push(l);
+      return acc;
+    }, {}),
     [filteredList]
   );
-
   const dates = useMemo(() => Object.keys(grouped).sort((a, b) => new Date(b) - new Date(a)), [grouped]);
 
   function formatLabel(d) {
@@ -811,7 +876,7 @@ function LogsPage({ logs, setLogs }) {
       하위카테고리: l.subcategory,
       품목: l.item,
       증감: l.change,
-      메모: l.reason,
+      메모: l.reason
     }));
     const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(data));
     const blob = new Blob([csv], { type: "text/csv" });
@@ -830,7 +895,7 @@ function LogsPage({ logs, setLogs }) {
       하위카테고리: l.subcategory,
       품목: l.item,
       증감: l.change,
-      메모: l.reason,
+      메모: l.reason
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -852,11 +917,13 @@ function LogsPage({ logs, setLogs }) {
       </div>
 
       {dates.length === 0 ? (
-        <p style={{ color: "#9ca3af" }}>기록이 없습니다.</p>
+        <p className="muted">기록이 없습니다.</p>
       ) : (
         dates.map((d) => (
           <section key={d} style={{ marginBottom: "16px" }}>
-            <h2 style={{ borderBottom: "1px solid #4b5563", paddingBottom: "4px", margin: "0 0 8px" }}>{formatLabel(d)}</h2>
+            <h2 style={{ borderBottom: "1px solid #4b5563", paddingBottom: "4px", margin: "0 0 8px" }}>
+              {formatLabel(d)}
+            </h2>
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {grouped[d].map((l, i) => {
                 const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
@@ -870,12 +937,10 @@ function LogsPage({ logs, setLogs }) {
                         {l.change > 0 ? ` 입고+${l.change}` : ` 출고-${-l.change}`}
                       </div>
                       {l.reason && (
-                        <div style={{ marginTop: 6, padding: 8, background: "#374151", borderRadius: 8, fontSize: 13, color: "#fff" }}>
-                          메모: {l.reason}
-                        </div>
+                        <div className="log-note">메모: {l.reason}</div>
                       )}
                     </div>
-                    <div style={{ display: "flex", gap: 8, alignSelf: "center" }}>
+                    <div className="log-actions">
                       <button className="btn btn-default" onClick={() => editReason(idx)}>{l.reason ? "메모 수정" : "메모 추가"}</button>
                       <button className="btn btn-destructive" onClick={() => deleteLog(idx)}>삭제</button>
                     </div>
@@ -899,7 +964,6 @@ export default function AppWrapper() {
   const [logs, setLogs] = useState(getLocalLogs);
   const isAdmin = getLocalAdmin();
 
-  // 로그인 라우트용 래퍼: 로그인 배경을 white.png로 고정
   const LoginShell = ({ children }) => (
     <div style={{ position: "relative", minHeight: "100vh" }}>
       <FixedBg
@@ -917,7 +981,6 @@ export default function AppWrapper() {
 
   return (
     <>
-      {/* 토스트: Router 바깥 */}
       <Toaster
         position="bottom-right"
         toastOptions={{
@@ -926,10 +989,12 @@ export default function AppWrapper() {
             color: "#fff",
             fontWeight: 600,
             borderRadius: "1rem",
-            fontSize: "1.08rem",
+            fontSize: "1.04rem",
+            WebkitFontSmoothing: "antialiased",
+            MozOsxFontSmoothing: "grayscale"
           },
           success: { style: { background: "#181a20", color: "#2dd4bf" } },
-          error: { style: { background: "#181a20", color: "#ee3a60" } },
+          error: { style: { background: "#181a20", color: "#ee3a60" } }
         }}
       />
 

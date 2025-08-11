@@ -1,19 +1,31 @@
 // src/firebase.js
+// Firebase Realtime Database 연결 헬퍼
+// 👉 아래 config 값은 네 프로젝트 콘솔에서 복사해서 넣어줘.
+//    (Project settings > Your apps > Firebase SDK snippet > Config)
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue } from "firebase/database";
+import {
+  getDatabase,
+  ref as _ref,
+  set as _set,
+  onValue as _onValue,
+} from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyB_dbko0nrKNTGUP_5SJBjLAXZp8wokVP8",
-  authDomain: "dokkebi-inventory-9bd2f.firebaseapp.com",
-  databaseURL: "https://dokkebi-inventory-9bd2f-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "dokkebi-inventory-9bd2f",
-  storageBucket: "dokkebi-inventory-9bd2f.firebasestorage.app",
-  messagingSenderId: "869306575595",
-  appId: "1:869306575595:web:36a1a3a988879c213facae",
-  measurementId: "G-928MG5M3Q1"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR-PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR-PROJECT-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "YOUR-PROJECT",
+  storageBucket: "YOUR-PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID",
 };
 
+// 앱/DB 초기화 (중복 방지)
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-export { db, ref, set, onValue };
+// App.js에서 그대로 import해서 쓰기 편하게 export alias 맞춰줌
+export { db };
+export const ref = _ref;
+export const set = _set;
+export const onValue = _onValue;
