@@ -11,7 +11,6 @@ import { Toaster, toast } from "react-hot-toast";
  * 상수 정의
  * ======================= */
 const locations = ["동아리방", "비행장", "교수님방"];
-const allLocations = ["전체", ...locations];
 const subcategories = {
   공구: ["수리", "납땜 용품", "드라이버", "그외 공구"],
   소모품: [
@@ -60,7 +59,7 @@ function saveLocalAdmin(val) {
 }
 
 /* =======================
- * Firebase helpers
+ * Firebase helpers (간단 저장/구독)
  * ======================= */
 function saveInventoryToCloud(data) {
   set(ref(db, "inventory/"), data);
@@ -70,42 +69,107 @@ function saveLogsToCloud(logs) {
 }
 
 /* =======================
+ * 공통: 고정 배경 레이어 컴포넌트
+ * - 스크롤과 무관하게 화면을 항상 덮음 (background-attachment: fixed 대체)
+ * - src: public 폴더의 파일을 process.env.PUBLIC_URL로 안전하게 참조
+ * ======================= */
+// 고정 배경: 이미지 비율 유지, 자동 크기 + min/max 제어, 스크롤과 분리
+function FixedBg({
+  src,
+  overlay = null,              // 예: "rgba(0,0,0,.2)" or null
+  maxW = "min(90vw, 1400px)",  // 가로 최대
+  maxH = "min(80vh, 900px)",   // 세로 최대
+  minW = "320px",              // 가로 최소
+  minH = "200px",              // 세로 최소
+  opacity = 1
+}) {
+  return (
+    <>
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: -2,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          pointerEvents: "none",       // 클릭 막지 않도록
+          overflow: "hidden"           // 이미지가 너무 커질 때 잘림 방지용
+        }}
+      >
+        <img
+          src={src}
+          alt=""
+          style={{
+            width: "auto",
+            height: "auto",
+            maxWidth: maxW,
+            maxHeight: maxH,
+            minWidth: minW,
+            minHeight: minH,
+            objectFit: "contain",      // 비율 유지
+            opacity
+          }}
+        />
+      </div>
+      {overlay && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: -1,
+            background: overlay,
+            pointerEvents: "none"
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/* =======================
  * Home
  * ======================= */
 function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLogs, isAdmin }) {
   const navigate = useNavigate();
   const categoryRefs = useRef({});
+  const cardRefs = useRef({});
   const [syncing, setSyncing] = useState(false);
 
-  // 로컬/클라우드 동기화
+  // 팝업(확대 보기) 상태: null | { kind: 'summary' } | { kind: 'loc', loc: string }
+  const [openPanel, setOpenPanel] = useState(null);
+
+  /* --- 로컬/클라우드 동기화 --- */
   useEffect(() => saveLocalInventory(inventory), [inventory]);
   useEffect(() => saveInventoryToCloud(inventory), [inventory]);
   useEffect(() => saveLocalLogs(logs), [logs]);
   useEffect(() => saveLogsToCloud(logs), [logs]);
 
-  // (가시적인) 동기화 인디케이터
+  /* --- (가시적인) 동기화 인디케이터 --- */
   useEffect(() => {
     setSyncing(true);
     const t = setTimeout(() => setSyncing(false), 700);
     return () => clearTimeout(t);
   }, [inventory, logs]);
 
-  // Firebase 구독 (1회)
+  /* --- Firebase 구독 (1회) --- */
   useEffect(() => {
     const invRef = ref(db, "inventory/");
     const logRef = ref(db, "logs/");
-
-    const unsubInv = onValue(invRef, (snapshot) => {
-      if (snapshot.exists()) setInventory(snapshot.val());
-    });
-    const unsubLog = onValue(logRef, (snapshot) => {
-      if (snapshot.exists()) setLogs(snapshot.val());
-    });
-    return () => {
-      unsubInv();
-      unsubLog();
-    };
+    const unsubInv = onValue(invRef, (s) => { if (s.exists()) setInventory(s.val()); });
+    const unsubLog = onValue(logRef, (s) => { if (s.exists()) setLogs(s.val()); });
+    return () => { unsubInv(); unsubLog(); };
   }, [setInventory, setLogs]);
+
+  /* --- 팝업 열릴 때 해당 카드로 자동 스크롤 --- */
+  useEffect(() => {
+    if (!openPanel) return;
+    const key = openPanel.kind === "summary" ? "summary" : openPanel.loc;
+    const el = cardRefs.current[key];
+    if (el && el.scrollIntoView) {
+      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    }
+  }, [openPanel]);
 
   /* ====== 재고 엑셀 내보내기 ====== */
   function exportInventoryExcel() {
@@ -156,7 +220,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     XLSX.writeFile(wb, "재고현황.xlsx");
   }
 
-  /* ====== 수량 증감(1시간 병합) ====== */
+  /* ====== 수량 증감(자정 1시간 병합) ====== */
   function handleUpdateItemCount(loc, cat, sub, idx, delta) {
     if (!isAdmin || delta === 0) return;
     const itemName = inventory[loc][cat][sub][idx]?.name;
@@ -258,7 +322,9 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
-  /* ====== 품목 전체 삭제(이름으로) ====== */
+  /* ====== 품목 전체 삭제(이름으로)
+   * 주의: 이 기능은 '전체' 카드의 삭제 버튼에서만 노출됩니다.
+   */
   function handleDeleteItem() {
     if (!isAdmin) return;
     const name = prompt("삭제할 품목 이름을 입력하세요:");
@@ -358,52 +424,22 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
   /* ====== UI ====== */
   return (
-    <main
-      className="app-main fade-in"
-      style={{
-        backgroundImage: `url(${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png)`,
-        backgroundRepeat: "no-repeat",
-        backgroundPosition: "center center",
-        backgroundSize: "40vw auto",
-        backgroundAttachment: "fixed",
-        backgroundColor: "#181a20",
-        minHeight: "100vh",
-        paddingBottom: "4rem",
-      }}
-    >
+    <main className="app-main fade-in">
+      {/* ✅ 메인 고정 배경 (스크롤과 독립/화면비 맞춤) */}
+<FixedBg
+  src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`}
+  overlay="rgba(0,0,0,.18)"
+  maxW="min(85vw, 1200px)"     // 원하는 값으로 쉽게 조절 가능
+  maxH="min(70vh, 800px)"
+  minW="360px"
+  minH="220px"
+  opacity={0.9}
+/>
+
       {/* 동기화 표시 */}
       {syncing && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "2.2rem",
-            right: "2.2rem",
-            background: "#2dd4bf",
-            color: "#181a20",
-            padding: "0.6rem 1.2rem",
-            borderRadius: "1rem",
-            fontWeight: 700,
-            fontSize: "1rem",
-            boxShadow: "0 2px 14px #2dd4bf44",
-            zIndex: 99999,
-            transition: "all 0.2s",
-          }}
-        >
-          <span
-            className="spinner"
-            style={{
-              display: "inline-block",
-              width: "1.1em",
-              height: "1.1em",
-              border: "2.5px solid #fff",
-              borderTop: "2.5px solid #2dd4bf",
-              borderRadius: "50%",
-              marginRight: "0.5em",
-              animation: "spin 0.7s linear infinite",
-              verticalAlign: "middle",
-            }}
-          />{" "}
-          동기화 중...
+        <div className="sync-indicator">
+          <span className="spinner" /> 동기화 중...
         </div>
       )}
 
@@ -412,23 +448,13 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       </h1>
 
       {/* 툴바 */}
-      <div
-        className="toolbar"
-        style={{ display: "flex", justifyContent: "center", gap: "1rem", alignItems: "center", margin: "0.75rem 0" }}
-      >
+      <div className="toolbar">
         <input
+          className="search-input"
           type="text"
           placeholder="검색..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          style={{
-            width: "50%",
-            padding: "0.5rem",
-            borderRadius: "0.25rem",
-            border: "1px solid #4b5563",
-            background: "#374151",
-            color: "#fff",
-          }}
         />
         <button className="btn btn-default" onClick={() => navigate("/logs")}>
           📘 기록
@@ -462,36 +488,25 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
             <button className="btn btn-default" onClick={exportInventoryExcel}>
               📤 재고 Excel
             </button>
-            <button className="btn btn-outline" onClick={() => handleDeleteItem()}>
-              🧹 품목명으로 전체 삭제
-            </button>
           </>
         )}
       </div>
 
       {/* 검색 결과 */}
       {searchTerm && (
-        <div className="search-result" style={{ width: "60%", margin: "1rem auto" }}>
-          <h3>🔍 검색 결과</h3>
+        <div className="search-result" style={{ margin: "10px auto" }}>
+          <h3 style={{ margin: 0, marginBottom: 6 }}>🔍 검색 결과</h3>
           {aggregated.length === 0 ? (
             <p style={{ color: "#9ca3af" }}>검색된 결과가 없습니다.</p>
           ) : (
             <>
               <ul style={{ listStyle: "disc inside" }}>
                 {aggregated.map((e, i) => (
-                  <li key={i} style={{ marginBottom: "0.5rem" }}>
+                  <li key={i} style={{ marginBottom: "6px" }}>
                     <div onClick={() => scrollToCategory("전체", e.cat, e.sub, e.name)} style={{ cursor: "pointer" }}>
                       [{e.cat} &gt; {e.sub}] {e.name} (총 {e.total}개)
                     </div>
-                    <div
-                      style={{
-                        fontSize: "0.875rem",
-                        color: "#9ca3af",
-                        display: "flex",
-                        gap: "0.5rem",
-                        flexWrap: "wrap",
-                      }}
-                    >
+                    <div style={{ fontSize: "13px", color: "#9ca3af", display: "flex", gap: "8px", flexWrap: "wrap" }}>
                       {locations.map((L) => (
                         <span
                           key={L}
@@ -505,7 +520,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                   </li>
                 ))}
               </ul>
-              <div style={{ textAlign: "right", marginTop: "0.5rem" }}>
+              <div style={{ textAlign: "right", marginTop: "6px" }}>
                 <button
                   className="btn btn-default"
                   onClick={() => {
@@ -528,93 +543,61 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         </div>
       )}
 
-      {/* 재고 카드 */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
-          gap: "1rem",
-          padding: "0 1rem 2rem",
-        }}
-      >
-        {allLocations.map((loc) => (
-          <div key={loc} className="card">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      {/* ===== ㅜ 레이아웃 ===== */}
+      {/* 위: 장소 카드 그리드 (가운데 정렬, 고정 높이로 주변 영향 최소화) */}
+      <div className="cards-grid">
+        {locations.map((loc) => (
+          <div
+            key={loc}
+            className="card fixed"
+            ref={(el) => { if (el) cardRefs.current[loc] = el; }}
+          >
+            <div
+              className="card-head"
+              onClick={() => setOpenPanel({ kind: "loc", loc })}
+              style={{ cursor: "zoom-in" }}
+            >
               <h2>{loc}</h2>
-              <div>
-                {isAdmin && loc !== "전체" && (
-                  <button className="btn btn-default" onClick={() => handleAddNewItem(loc)}>
-                    +추가
-                  </button>
-                )}
-                {isAdmin && loc === "전체" && (
-                  <button className="btn btn-destructive" onClick={handleDeleteItem}>
-                    삭제
-                  </button>
-                )}
-              </div>
+              {isAdmin && (
+                <button
+                  className="btn btn-default"
+                  onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}
+                >
+                  +추가
+                </button>
+              )}
             </div>
 
-            <div className="card-content">
+            <div className="card-content scroll">
               {Object.entries(subcategories).map(([cat, subs]) => (
-                <details
-                  key={cat}
-                  ref={(el) => {
-                    if (el) categoryRefs.current[`${loc}-${cat}`] = el;
-                  }}
-                >
+                <details key={cat} ref={(el) => { if (el) categoryRefs.current[`${loc}-${cat}`] = el; }}>
                   <summary>📦 {cat}</summary>
                   {subs.map((sub) => (
-                    <details
-                      key={sub}
-                      ref={(el) => {
-                        if (el) categoryRefs.current[`${loc}-${cat}-${sub}`] = el;
-                      }}
-                      style={{ marginLeft: "1rem" }}
-                    >
+                    <details key={sub} ref={(el) => { if (el) categoryRefs.current[`${loc}-${cat}-${sub}`] = el; }} style={{ marginLeft: 8 }}>
                       <summary>▸ {sub}</summary>
-                      <ul style={{ marginLeft: "1rem" }}>
-                        {loc === "전체"
-                          ? Object.entries(
-                              locations.reduce((acc, L) => {
-                                (inventory[L]?.[cat]?.[sub] || []).forEach((it) => {
-                                  acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                                });
-                                return acc;
-                              }, {})
-                            ).map(([name, count]) => <li key={name}>{name} ({count}개)</li>)
-                          : (inventory[loc]?.[cat]?.[sub] || []).map((it, idx) => (
-                              <li
-                                key={idx}
-                                ref={(el) => {
-                                  const refKey = `${loc}-${cat}-${sub}-${it.name}`;
-                                  if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
-                                }}
-                                style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                              >
-                                <div>
-                                  <span>{it.name} ({it.count}개)</span>
-                                  {it.note && (
-                                    <div style={{ fontSize: "0.75rem", color: "#999" }}>특이사항: {it.note}</div>
-                                  )}
-                                </div>
-                                {isAdmin && (
-                                  <div style={{ display: "flex", gap: "0.25rem" }}>
-                                    <button onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋</button>
-                                    <button onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－</button>
-                                    <button onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleEditItemNote(loc, cat, sub, idx);
-                                      }}
-                                    >
-                                      📝 메모
-                                    </button>
-                                  </div>
-                                )}
-                              </li>
-                            ))}
+                      <ul style={{ marginLeft: 6 }}>
+                        {(inventory[loc]?.[cat]?.[sub] || []).map((it, idx) => (
+                          <li
+                            key={idx}
+                            ref={(el) => {
+                              const refKey = `${loc}-${cat}-${sub}-${it.name}`;
+                              if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
+                            }}
+                          >
+                            <div>
+                              <span>{it.name} ({it.count}개)</span>
+                              {it.note && <div style={{ fontSize: 12, color: "#999" }}>특이사항: {it.note}</div>}
+                            </div>
+                            {isAdmin && (
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button className="btn" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋</button>
+                                <button className="btn" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－</button>
+                                <button className="btn" onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
+                                <button className="btn" onClick={(e) => { e.stopPropagation(); handleEditItemNote(loc, cat, sub, idx); }}>📝 메모</button>
+                              </div>
+                            )}
+                          </li>
+                        ))}
                       </ul>
                     </details>
                   ))}
@@ -624,6 +607,121 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           </div>
         ))}
       </div>
+
+      {/* 아래: 전체 요약 박스 (중앙, 폭 축소 / 헤더만 클릭 시 팝업) */}
+      <section className="summary-bottom">
+        <div
+          className="card summary-card"
+          ref={(el) => { if (el) cardRefs.current["summary"] = el; }}
+        >
+          <div
+            className="card-head"
+            onClick={() => setOpenPanel({ kind: "summary" })}
+            style={{ cursor: "zoom-in" }}
+          >
+            <h2>전체</h2>
+            {isAdmin && (
+              <button
+                className="btn btn-destructive"
+                onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}
+              >
+                삭제
+              </button>
+            )}
+          </div>
+
+          <div className="card-content scroll">
+            {Object.entries(subcategories).map(([cat, subs]) => (
+              <details key={cat} ref={(el) => { if (el) categoryRefs.current[`전체-${cat}`] = el; }}>
+                <summary>📦 {cat}</summary>
+                {subs.map((sub) => (
+                  <details key={sub} ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}`] = el; }} style={{ marginLeft: 8 }}>
+                    <summary>▸ {sub}</summary>
+                    <ul style={{ marginLeft: 6 }}>
+                      {Object.entries(
+                        locations.reduce((acc, L) => {
+                          (inventory[L]?.[cat]?.[sub] || []).forEach((it) => { acc[it.name] = (acc[it.name] || 0) + (it.count || 0); });
+                          return acc;
+                        }, {})
+                      ).map(([name, count]) => (
+                        <li key={name}><div><span>{name} ({count}개)</span></div></li>
+                      ))}
+                    </ul>
+                  </details>
+                ))}
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ===== 팝업(확대 보기) 오버레이 ===== */}
+      {openPanel && (
+        <div className="overlay" onClick={() => setOpenPanel(null)}>
+          <div className="popup-card pop-in" onClick={(e) => e.stopPropagation()}>
+            <div className="popup-head">
+              <h3>
+                {openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}
+              </h3>
+              <button className="btn btn-outline" onClick={() => setOpenPanel(null)}>닫기</button>
+            </div>
+
+            <div className="popup-content">
+              {openPanel.kind === "summary" ? (
+                Object.entries(subcategories).map(([cat, subs]) => (
+                  <details key={cat} open>
+                    <summary>📦 {cat}</summary>
+                    {subs.map((sub) => (
+                      <details key={sub} open style={{ marginLeft: 8 }}>
+                        <summary>▸ {sub}</summary>
+                        <ul style={{ marginLeft: 6 }}>
+                          {Object.entries(
+                            locations.reduce((acc, L) => {
+                              (inventory[L]?.[cat]?.[sub] || []).forEach((it) => { acc[it.name] = (acc[it.name] || 0) + (it.count || 0); });
+                              return acc;
+                            }, {})
+                          ).map(([name, count]) => (
+                            <li key={name}><div><span>{name} ({count}개)</span></div></li>
+                          ))}
+                        </ul>
+                      </details>
+                    ))}
+                  </details>
+                ))
+              ) : (
+                Object.entries(subcategories).map(([cat, subs]) => (
+                  <details key={cat} open>
+                    <summary>📦 {cat}</summary>
+                    {subs.map((sub) => (
+                      <details key={sub} open style={{ marginLeft: 8 }}>
+                        <summary>▸ {sub}</summary>
+                        <ul style={{ marginLeft: 6 }}>
+                          {(inventory[openPanel.loc]?.[cat]?.[sub] || []).map((it, idx) => (
+                            <li key={idx}>
+                              <div>
+                                <span>{it.name} ({it.count}개)</span>
+                                {it.note && <div style={{ fontSize: 12, color: "#999" }}>특이사항: {it.note}</div>}
+                              </div>
+                              {isAdmin && (
+                                <div style={{ display: "flex", gap: 6 }}>
+                                  <button className="btn" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>＋</button>
+                                  <button className="btn" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>－</button>
+                                  <button className="btn" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>✎ 이름</button>
+                                  <button className="btn" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>📝 메모</button>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ))}
+                  </details>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -655,7 +753,7 @@ function LogsPage({ logs, setLogs }) {
   function formatLabel(d) {
     const diff = Math.floor((new Date() - new Date(d)) / (1000 * 60 * 60 * 24));
     return diff === 0 ? "오늘" : diff === 1 ? "어제" : d;
-    }
+  }
 
   function editReason(i) {
     const note = prompt("메모:", logs[i].reason || "");
@@ -708,77 +806,47 @@ function LogsPage({ logs, setLogs }) {
 
   return (
     <main className="app-main logs-container" style={{ minHeight: "100vh" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1rem" }}>
-        <button className="btn btn-default" onClick={() => navigate("/")}>
-          ← 돌아가기
-        </button>
-        <h1 style={{ flex: 1 }}>📘 입출고 기록</h1>
-        <input
-          type="date"
-          value={filterDate}
-          onChange={(e) => setFilterDate(e.target.value)}
-          style={{
-            height: "2.25rem",
-            padding: "0 0.7rem",
-            borderRadius: "0.25rem",
-            border: "1px solid #4b5563",
-            background: "#222b",
-            color: "#fff",
-            fontSize: "1rem",
-            outline: "none",
-            boxSizing: "border-box",
-            verticalAlign: "middle",
-          }}
-        />
-        <button className="btn btn-outline" onClick={() => setFilterDate("")}>
-          필터 해제
-        </button>
-        <button className="btn btn-default" onClick={exportCSV}>
-          📄 CSV
-        </button>
-        <button className="btn btn-default" onClick={exportExcel}>
-          📑 Excel
-        </button>
+
+
+      {/* 상단 헤더: 왼쪽 돌아가기, 가운데 큰 제목, 오른쪽 컨트롤 */}
+      <div className="logs-header">
+        <button className="btn btn-default back-btn" onClick={() => navigate("/")}>← 돌아가기</button>
+        <h1 className="logs-title">📘 입출고 기록</h1>
+        <div className="logs-controls">
+          <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} />
+          <button className="btn btn-outline" onClick={() => setFilterDate("")}>필터 해제</button>
+          <button className="btn btn-default" onClick={exportCSV}>📄 CSV</button>
+          <button className="btn btn-default" onClick={exportExcel}>📑 Excel</button>
+        </div>
       </div>
 
       {dates.length === 0 ? (
         <p style={{ color: "#9ca3af" }}>기록이 없습니다.</p>
       ) : (
         dates.map((d) => (
-          <section key={d} style={{ marginBottom: "1.5rem" }}>
-            <h2 style={{ borderBottom: "1px solid #4b5563", paddingBottom: "0.25rem" }}>{formatLabel(d)}</h2>
-            <ul style={{ listStyle: "none", padding: 0 }}>
+          <section key={d} style={{ marginBottom: "16px" }}>
+            <h2 style={{ borderBottom: "1px solid #4b5563", paddingBottom: "4px", margin: "0 0 8px" }}>{formatLabel(d)}</h2>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {grouped[d].map((l, i) => {
                 const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
                 return (
-                  <li key={i} style={{ marginBottom: "1rem" }}>
-                    <div>
-                      [{l.time}] {l.location} &gt; {l.category} &gt; {l.subcategory} / <strong>{l.item}</strong>
-                    </div>
-                    <div className={l.change > 0 ? "text-green" : "text-red"}>
-                      {l.change > 0 ? ` 입고+${l.change}` : ` 출고-${-l.change}`}
-                    </div>
-                    {l.reason && (
-                      <div
-                        style={{
-                          marginTop: "0.25rem",
-                          padding: "0.5rem",
-                          background: "#374151",
-                          borderRadius: "0.25rem",
-                          fontSize: "0.875rem",
-                          color: "#fff",
-                        }}
-                      >
-                        메모: {l.reason}
+                  <li key={i} className="log-item">
+                    <div className="log-text">
+                      <div style={{ fontSize: 14 }}>
+                        [{l.time}] {l.location} &gt; {l.category} &gt; {l.subcategory} / <strong>{l.item}</strong>
                       </div>
-                    )}
-                    <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
-                      <button className="btn btn-default" onClick={() => editReason(idx)}>
-                        {l.reason ? "메모 수정" : "메모 추가"}
-                      </button>
-                      <button className="btn btn-destructive" onClick={() => deleteLog(idx)}>
-                        삭제
-                      </button>
+                      <div className={l.change > 0 ? "text-green" : "text-red"} style={{ marginTop: 4 }}>
+                        {l.change > 0 ? ` 입고+${l.change}` : ` 출고-${-l.change}`}
+                      </div>
+                      {l.reason && (
+                        <div style={{ marginTop: 6, padding: 8, background: "#374151", borderRadius: 8, fontSize: 13, color: "#fff" }}>
+                          메모: {l.reason}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignSelf: "center" }}>
+                      <button className="btn btn-default" onClick={() => editReason(idx)}>{l.reason ? "메모 수정" : "메모 추가"}</button>
+                      <button className="btn btn-destructive" onClick={() => deleteLog(idx)}>삭제</button>
                     </div>
                   </li>
                 );
@@ -799,6 +867,22 @@ export default function AppWrapper() {
   const [searchTerm, setSearchTerm] = useState("");
   const [logs, setLogs] = useState(getLocalLogs);
   const isAdmin = getLocalAdmin();
+
+  // 로그인 라우트용 래퍼: 로그인 배경을 white.png로 고정
+const LoginShell = ({ children }) => (
+  <div style={{ position: "relative", minHeight: "100vh" }}>
+    <FixedBg
+      src={`${process.env.PUBLIC_URL}/white.png`}
+      overlay={null}                 // 덮개 필요 없으면 null
+      maxW="min(70vw, 900px)"
+      maxH="min(65vh, 700px)"
+      minW="300px"
+      minH="180px"
+      opacity={1}
+    />
+    <div style={{ position: "relative", zIndex: 0 }}>{children}</div>
+  </div>
+);
 
   return (
     <>
@@ -824,17 +908,19 @@ export default function AppWrapper() {
             <Route
               path="*"
               element={
-                <LoginPage
-                  onLogin={(pw) => {
-                    // 비밀번호는 여기서 검사
-                    if (pw === "2500") {
-                      saveLocalAdmin(true);
-                      window.location.reload();
-                    } else {
-                      toast.error("비밀번호가 틀렸습니다.");
-                    }
-                  }}
-                />
+                <LoginShell>
+                  <LoginPage
+                    onLogin={(pw) => {
+                      // 비밀번호는 여기서 검사
+                      if (pw === "2500") {
+                        saveLocalAdmin(true);
+                        window.location.reload();
+                      } else {
+                        toast.error("비밀번호가 틀렸습니다.");
+                      }
+                    }}
+                  />
+                </LoginShell>
               }
             />
           ) : (
