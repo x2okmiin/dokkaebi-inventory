@@ -6,6 +6,9 @@ import "./App.css";
 import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
 
+/* ==== Firebase (실시간 동기화) ==== */
+import { db, ref, set, onValue } from "./firebase";
+
 /* =======================
  * 상수 정의
  * ======================= */
@@ -55,21 +58,6 @@ function getLocalAdmin() {
 }
 function saveLocalAdmin(val) {
   localStorage.setItem("do-kkae-bi-admin", val ? "true" : "false");
-}
-
-/* =======================
- * Firebase helpers (옵션)
- * ======================= */
-// import { db, ref, set, onValue } from "./firebase";
-function saveInventoryToCloud(data) {
-  try {
-    // set(ref(db, "inventory/"), data);
-  } catch (e) {}
-}
-function saveLogsToCloud(logs) {
-  try {
-    // set(ref(db, "logs/"), logs);
-  } catch (e) {}
 }
 
 /* =======================
@@ -141,14 +129,35 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const dataMenuRef = useRef(null);
 
-  // 팝업(확대 보기) 상태: null | { kind: 'summary' } | { kind: 'loc', loc: string }
+  // 팝업(확대 보기) 상태
   const [openPanel, setOpenPanel] = useState(null);
 
+  // 🔒 클라우드 → 로컬 적용 중인지(무한 루프 방지)
+  const applyingCloudRef = useRef({ inv: false, logs: false });
+
   /* --- 로컬/클라우드 동기화 --- */
-  useEffect(() => saveLocalInventory(inventory), [inventory]);
-  useEffect(() => saveInventoryToCloud(inventory), [inventory]);
-  useEffect(() => saveLocalLogs(logs), [logs]);
-  useEffect(() => saveLogsToCloud(logs), [logs]);
+  useEffect(() => {
+    if (applyingCloudRef.current.inv) {
+      applyingCloudRef.current.inv = false;
+      return;
+    }
+    saveLocalInventory(inventory);
+    // 관리자만 클라우드 반영
+    if (isAdmin) {
+      set(ref(db, "inventory/"), inventory).catch(() => {});
+    }
+  }, [inventory, isAdmin]);
+
+  useEffect(() => {
+    if (applyingCloudRef.current.logs) {
+      applyingCloudRef.current.logs = false;
+      return;
+    }
+    saveLocalLogs(logs);
+    if (isAdmin) {
+      set(ref(db, "logs/"), logs).catch(() => {});
+    }
+  }, [logs, isAdmin]);
 
   /* --- (가시적인) 동기화 인디케이터 --- */
   useEffect(() => {
@@ -173,6 +182,38 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       document.removeEventListener("touchstart", onClickOutside);
     };
   }, [dataMenuOpen]);
+
+  /* --- Firebase 실시간 구독 (읽기) --- */
+  useEffect(() => {
+    // 로그인 상태에 상관없이 읽기는 허용하면, 비관리자도 최신 데이터 보기 가능
+    const invRef = ref(db, "inventory/");
+    const logRef = ref(db, "logs/");
+
+    const unsubInv = onValue(invRef, (snap) => {
+      if (!snap.exists()) return;
+      const cloud = snap.val();
+      // 현재와 다를 때만 적용
+      if (JSON.stringify(cloud) !== JSON.stringify(inventory)) {
+        applyingCloudRef.current.inv = true;
+        setInventory(cloud);
+      }
+    });
+
+    const unsubLogs = onValue(logRef, (snap) => {
+      if (!snap.exists()) return;
+      const cloud = snap.val();
+      if (JSON.stringify(cloud) !== JSON.stringify(logs)) {
+        applyingCloudRef.current.logs = true;
+        setLogs(cloud);
+      }
+    });
+
+    return () => {
+      unsubInv();
+      unsubLogs();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 초기에만 구독
 
   /* --- 팝업 열릴 때 해당 카드로 자동 스크롤 --- */
   useEffect(() => {
@@ -284,6 +325,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     if (!newName || newName === oldName) return;
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
+      // 동일 하위카테고리 내 모든 장소에 이름 일괄 반영
       locations.forEach((L) => {
         inv[L][cat][sub] = inv[L][cat][sub].map((item) =>
           item.name === oldName ? { ...item, name: newName } : item

@@ -1,7 +1,8 @@
 // src/firebase.js
 // Firebase Realtime Database 연결 헬퍼
-// 👉 아래 config 값은 네 프로젝트 콘솔에서 복사해서 넣어줘.
+// 👉 아래 config 값은 Firebase 콘솔에서 복사해서 넣어줘.
 //    (Project settings > Your apps > Firebase SDK snippet > Config)
+
 import { initializeApp } from "firebase/app";
 import {
   getDatabase,
@@ -20,12 +21,11 @@ const firebaseConfig = {
   appId: "YOUR_APP_ID",
 };
 
-// 앱/DB 초기화 (중복 방지)
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// App.js에서 그대로 import해서 쓰기 편하게 export alias 맞춰줌
 export { db };
 export const ref = _ref;
 export const set = _set;
 export const onValue = _onValue;
+
