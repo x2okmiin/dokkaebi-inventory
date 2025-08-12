@@ -1,14 +1,13 @@
 // src/App.js
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { HashRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
+import { HashRouter as Router, Routes, Route, useNavigate, Navigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import "./App.css";
-import { Toaster, toast } from "react-hot-toast";
 import LoginPage from "./LoginPage";
-import { db, ref, set, onValue } from "./firebase";
+import { Toaster, toast } from "react-hot-toast";
 
 /* =======================
- * 상수
+ * 상수 정의
  * ======================= */
 const locations = ["동아리방", "비행장", "교수님방"];
 const subcategories = {
@@ -25,54 +24,55 @@ const subcategories = {
 /* =======================
  * localStorage helpers
  * ======================= */
-const LS_INV = "do-kkae-bi-inventory";
-const LS_LOG = "do-kkae-bi-logs";
-const LS_ADM = "do-kkae-bi-admin";
-
-function newBaseInventory() {
+function getLocalInventory() {
+  const d = localStorage.getItem("do-kkae-bi-inventory");
+  if (d) return JSON.parse(d);
   const base = {};
   locations.forEach((loc) => {
     base[loc] = {};
-    Object.entries(subcategories).forEach(([cat, subs]) => {
+    Object.keys(subcategories).forEach((cat) => {
       base[loc][cat] = {};
-      subs.forEach((sub) => (base[loc][cat][sub] = []));
+      subcategories[cat].forEach((sub) => {
+        base[loc][cat][sub] = [];
+      });
     });
   });
   return base;
 }
-function getLocalInventory() {
-  const d = localStorage.getItem(LS_INV);
-  return d ? JSON.parse(d) : newBaseInventory();
-}
 function saveLocalInventory(data) {
-  localStorage.setItem(LS_INV, JSON.stringify(data));
+  localStorage.setItem("do-kkae-bi-inventory", JSON.stringify(data));
 }
 function getLocalLogs() {
-  const d = localStorage.getItem(LS_LOG);
+  const d = localStorage.getItem("do-kkae-bi-logs");
   return d ? JSON.parse(d) : [];
 }
 function saveLocalLogs(data) {
-  localStorage.setItem(LS_LOG, JSON.stringify(data));
+  localStorage.setItem("do-kkae-bi-logs", JSON.stringify(data));
 }
 function getLocalAdmin() {
-  return localStorage.getItem(LS_ADM) === "true";
+  return localStorage.getItem("do-kkae-bi-admin") === "true";
 }
 function saveLocalAdmin(val) {
-  localStorage.setItem(LS_ADM, val ? "true" : "false");
+  localStorage.setItem("do-kkae-bi-admin", val ? "true" : "false");
 }
 
 /* =======================
- * Firebase helpers
+ * Firebase helpers (옵션)
  * ======================= */
+// import { db, ref, set, onValue } from "./firebase";
 function saveInventoryToCloud(data) {
-  set(ref(db, "inventory/"), data);
+  try {
+    // set(ref(db, "inventory/"), data);
+  } catch (e) {}
 }
 function saveLogsToCloud(logs) {
-  set(ref(db, "logs/"), logs);
+  try {
+    // set(ref(db, "logs/"), logs);
+  } catch (e) {}
 }
 
 /* =======================
- * 공통: 고정 배경
+ * 고정 배경
  * ======================= */
 function FixedBg({
   src,
@@ -128,114 +128,72 @@ function FixedBg({
 }
 
 /* =======================
- * 버튼 리플 이펙트 훅 (터치/마우스 공통)
- * ======================= */
-function useRipple() {
-  useEffect(() => {
-    function createRipple(e) {
-      const target = e.target.closest(".btn");
-      if (!target) return;
-      const rect = target.getBoundingClientRect();
-      const ripple = document.createElement("span");
-      ripple.className = "ripple-anim";
-      const size = Math.max(rect.width, rect.height);
-      const x = (e.clientX ?? (e.touches?.[0]?.clientX || 0)) - rect.left - size / 2;
-      const y = (e.clientY ?? (e.touches?.[0]?.clientY || 0)) - rect.top - size / 2;
-      ripple.style.width = ripple.style.height = `${size}px`;
-      ripple.style.left = `${x}px`;
-      ripple.style.top = `${y}px`;
-      target.appendChild(ripple);
-      setTimeout(() => ripple.remove(), 550);
-    }
-    document.addEventListener("click", createRipple);
-    document.addEventListener("touchstart", createRipple, { passive: true });
-    return () => {
-      document.removeEventListener("click", createRipple);
-      document.removeEventListener("touchstart", createRipple);
-    };
-  }, []);
-}
-
-/* =======================
  * Home
  * ======================= */
 function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLogs, isAdmin }) {
   const navigate = useNavigate();
-  useRipple();
-
   const categoryRefs = useRef({});
   const cardRefs = useRef({});
-
-  // 데이터 메뉴 (Export/Import) 상태
-  const [dataMenuOpen, setDataMenuOpen] = useState(false);
-  //const fileInputRef = useRef(null);
   const [syncing, setSyncing] = useState(false);
 
-  // 팝업(확대 보기)
+  // 데이터 메뉴 (Export/Import)
+  const [dataMenuOpen, setDataMenuOpen] = useState(false);
+  const dataMenuRef = useRef(null);
+
+  // 팝업(확대 보기) 상태: null | { kind: 'summary' } | { kind: 'loc', loc: string }
   const [openPanel, setOpenPanel] = useState(null);
 
-  // 🔒 파이어베이스 핑퐁 방지 + 저장 디바운스
-  const cloudInv = useRef(false);
-  const cloudLogs = useRef(false);
-  const invSaveTimer = useRef(null);
-  const logSaveTimer = useRef(null);
+  /* --- 로컬/클라우드 동기화 --- */
+  useEffect(() => saveLocalInventory(inventory), [inventory]);
+  useEffect(() => saveInventoryToCloud(inventory), [inventory]);
+  useEffect(() => saveLocalLogs(logs), [logs]);
+  useEffect(() => saveLogsToCloud(logs), [logs]);
 
-  /* --- 동기화: 로컬 저장 + (클라우드 디바운스 저장) --- */
+  /* --- (가시적인) 동기화 인디케이터 --- */
   useEffect(() => {
-    saveLocalInventory(inventory);
-    if (!cloudInv.current) {
-      if (invSaveTimer.current) clearTimeout(invSaveTimer.current);
-      invSaveTimer.current = setTimeout(() => saveInventoryToCloud(inventory), 350);
-    }
     setSyncing(true);
-    const t = setTimeout(() => setSyncing(false), 650);
+    const t = setTimeout(() => setSyncing(false), 700);
     return () => clearTimeout(t);
-  }, [inventory]);
+  }, [inventory, logs]);
 
+  /* --- 외부 클릭으로 데이터 메뉴 닫기 --- */
   useEffect(() => {
-    saveLocalLogs(logs);
-    if (!cloudLogs.current) {
-      if (logSaveTimer.current) clearTimeout(logSaveTimer.current);
-      logSaveTimer.current = setTimeout(() => saveLogsToCloud(logs), 350);
+    function onClickOutside(e) {
+      if (dataMenuRef.current && !dataMenuRef.current.contains(e.target)) {
+        setDataMenuOpen(false);
+      }
     }
-    setSyncing(true);
-    const t = setTimeout(() => setSyncing(false), 650);
-    return () => clearTimeout(t);
-  }, [logs]);
+    if (dataMenuOpen) {
+      document.addEventListener("mousedown", onClickOutside);
+      document.addEventListener("touchstart", onClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("touchstart", onClickOutside);
+    };
+  }, [dataMenuOpen]);
 
-  /* --- Firebase 구독 (1회) --- */
+  /* --- Firebase 구독 (필요 시 활성화) ---
   useEffect(() => {
     const invRef = ref(db, "inventory/");
     const logRef = ref(db, "logs/");
-    const unsubInv = onValue(invRef, (s) => {
-      if (s.exists()) {
-        cloudInv.current = true;
-        setInventory(s.val());
-        setTimeout(() => (cloudInv.current = false), 0);
-      }
-    });
-    const unsubLog = onValue(logRef, (s) => {
-      if (s.exists()) {
-        cloudLogs.current = true;
-        setLogs(s.val());
-        setTimeout(() => (cloudLogs.current = false), 0);
-      }
-    });
-    return () => {
-      unsubInv();
-      unsubLog();
-    };
+    const unsubInv = onValue(invRef, (s) => { if (s.exists()) setInventory(s.val()); });
+    const unsubLog = onValue(logRef, (s) => { if (s.exists()) setLogs(s.val()); });
+    return () => { unsubInv(); unsubLog(); };
   }, [setInventory, setLogs]);
+  */
 
-  /* --- 팝업 열릴 때 해당 카드로 스크롤 --- */
+  /* --- 팝업 열릴 때 해당 카드로 자동 스크롤 --- */
   useEffect(() => {
     if (!openPanel) return;
     const key = openPanel.kind === "summary" ? "summary" : openPanel.loc;
     const el = cardRefs.current[key];
-    if (el?.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    if (el && el.scrollIntoView) {
+      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    }
   }, [openPanel]);
 
-  /* ====== 내보내기: 재고 엑셀 ====== */
+  /* ====== 재고 엑셀 내보내기 ====== */
   function exportInventoryExcel() {
     const rows = [];
     const itemTotals = {};
@@ -249,7 +207,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
               하위카테고리: sub,
               품목명: item.name,
               수량: item.count,
-              메모: item.note || ""
             });
             if (!itemTotals[item.name]) itemTotals[item.name] = { 합계: 0, 장소별: {} };
             itemTotals[item.name].합계 += item.count;
@@ -259,7 +216,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       });
     });
 
-    // 정렬
     rows.sort((a, b) => {
       if (a.장소 !== b.장소) return a.장소.localeCompare(b.장소);
       if (a.상위카테고리 !== b.상위카테고리) return a.상위카테고리.localeCompare(b.상위카테고리);
@@ -267,57 +223,23 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       return a.품목명.localeCompare(b.품목명);
     });
 
-    // 합계 섹션
     rows.push({});
     rows.push({ 품목명: "=== 품목별 전체 합계 ===" });
     Object.entries(itemTotals).forEach(([name, info]) => {
-      rows.push({ 품목명: name, 총합계: info.합계, ...info.장소별 });
+      rows.push({
+        품목명: name,
+        총합계: info.합계,
+        ...info.장소별,
+      });
     });
 
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "재고현황");
     XLSX.writeFile(wb, "재고현황.xlsx");
-    toast.success("재고 Excel 내보내기 완료");
   }
 
-  /* ====== 가져오기: CSV/XLSX 업로드 ====== */
-  function handleFilePicked(file) {
-    if (!file) return;
-    if (!window.confirm("⚠️ 현재 재고를 덮어쓰시겠습니까?")) return;
-    const rd = new FileReader();
-    rd.onload = (ev) => {
-      try {
-        const wb = XLSX.read(ev.target.result, { type: "binary" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws);
-        const inv = newBaseInventory();
-        data.forEach((r) => {
-          const loc = r["장소"], cat = r["상위카테고리"], sub = r["하위카테고리"];
-          const nm = r["품목명"], cnt = Number(r["수량"] || 0), note = r["메모"] || "";
-          if (locations.includes(loc) && subcategories[cat]?.includes(sub) && nm) {
-            inv[loc][cat][sub].push({ name: nm, count: Math.max(0, cnt), note });
-          }
-        });
-        setInventory(inv);
-        toast.success("가져오기 완료");
-      } catch (err) {
-        console.error(err);
-        toast.error("가져오기 실패: 파일 형식을 확인해주세요.");
-      }
-    };
-    rd.readAsBinaryString(file);
-  }
-  function triggerImport() {
-    if (!isAdmin) return;
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".csv,.xlsx";
-    input.onchange = (e) => handleFilePicked(e.target.files?.[0]);
-    input.click();
-  }
-
-  /* ====== 수량 증감(1시간 병합) ====== */
+  /* ====== 수량 증감(자정 1시간 병합) ====== */
   function handleUpdateItemCount(loc, cat, sub, idx, delta) {
     if (!isAdmin || delta === 0) return;
     const itemName = inventory[loc][cat][sub][idx]?.name;
@@ -336,31 +258,39 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     const key = `${loc}|${cat}|${sub}|${itemName}|${delta > 0 ? "IN" : "OUT"}`;
     setLogs((prev) => {
       const arr = [...prev];
-      const mergeIdx = arr.findIndex((l) => l.key === key && now - new Date(l.ts) < 60 * 60 * 1000);
+      const mergeIdx = arr.findIndex(
+        (l) => l.key === key && now - new Date(l.ts) < 60 * 60 * 1000
+      );
       if (mergeIdx > -1) {
-        arr[mergeIdx] = { ...arr[mergeIdx], change: arr[mergeIdx].change + delta, time, ts };
+        arr[mergeIdx] = {
+          ...arr[mergeIdx],
+          change: arr[mergeIdx].change + delta,
+          time,
+          ts,
+        };
       } else {
         arr.unshift({
-          key, location: loc, category: cat, subcategory: sub,
-          item: itemName, change: delta, reason: "입출고", time, ts
+          key,
+          location: loc,
+          category: cat,
+          subcategory: sub,
+          item: itemName,
+          change: delta,
+          reason: "입출고",
+          time,
+          ts,
         });
       }
       return arr;
     });
   }
 
-  /* ====== 이름/메모/추가/삭제 ====== */
+  /* ====== 품목 이름 수정 ====== */
   function handleEditItemName(loc, cat, sub, idx) {
     if (!isAdmin) return;
     const oldName = inventory[loc][cat][sub][idx].name;
-    const newName = prompt("새 품목명을 입력하세요:", oldName)?.trim();
+    const newName = prompt("새 품목명을 입력하세요:", oldName);
     if (!newName || newName === oldName) return;
-
-    const exists = locations.some((L) =>
-      (inventory[L]?.[cat]?.[sub] || []).some((it) => it.name === newName)
-    );
-    if (exists) return toast.error("해당 카테고리/하위에 같은 이름이 이미 있어요(전 위치).");
-
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
       locations.forEach((L) => {
@@ -372,6 +302,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
+  /* ====== 품목 메모 ====== */
   function handleEditItemNote(loc, cat, sub, idx) {
     if (!isAdmin) return;
     setInventory((prev) => {
@@ -384,21 +315,17 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
+  /* ====== 신규 품목 추가 ====== */
   function handleAddNewItem(loc) {
     if (!isAdmin) return;
     const cat = prompt("상위 카테고리 선택:\n" + Object.keys(subcategories).join(", "));
     if (!cat || !subcategories[cat]) return toast.error("올바른 카테고리가 아닙니다.");
     const sub = prompt("하위 카테고리 선택:\n" + subcategories[cat].join(", "));
     if (!sub || !subcategories[cat].includes(sub)) return toast.error("올바른 하위카테고리가 아닙니다.");
-    const name = prompt("추가할 품목명:")?.trim();
+    const name = prompt("추가할 품목명:");
     if (!name) return;
     const count = Number(prompt("초기 수량 입력:"));
     if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
-
-    const duplicate = locations.some((L) =>
-      (inventory[L]?.[cat]?.[sub] || []).some((it) => it.name === name)
-    );
-    if (duplicate) return toast.error("이미 같은 이름의 품목이 존재합니다(전 위치).");
 
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
@@ -411,9 +338,10 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
   }
 
+  /* ====== 품목 전체 삭제(이름으로) ====== */
   function handleDeleteItem() {
     if (!isAdmin) return;
-    const name = prompt("삭제할 품목 이름을 입력하세요:")?.trim();
+    const name = prompt("삭제할 품목 이름을 입력하세요:");
     if (!name) return;
 
     let totalCount = 0;
@@ -440,7 +368,9 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       return newInv;
     });
 
-    const now = new Date(), ts = now.toISOString(), time = now.toLocaleString();
+    const now = new Date(),
+      ts = now.toISOString(),
+      time = now.toLocaleString();
     setLogs((prev) => [
       {
         key: `전체||${name}|OUT`,
@@ -451,13 +381,13 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         change: -totalCount,
         reason: "해당 품목은 총괄 삭제됨",
         time,
-        ts
+        ts,
       },
-      ...prev
+      ...prev,
     ]);
   }
 
-  /* ====== 검색 / 집계 ====== */
+  /* ====== 검색 / 결과 집계 ====== */
   const filtered = useMemo(
     () =>
       Object.entries(inventory).flatMap(([loc, cats]) =>
@@ -502,18 +432,17 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     }, 100);
   }
 
-  /* ====== UI ====== */
   return (
     <main className="app-main fade-in">
-      {/* 배경 */}
+      {/* 고정 배경 */}
       <FixedBg
         src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`}
-        overlay="rgba(0,0,0,.16)"
-        maxW="min(86vw, 1260px)"
-        maxH="min(72vh, 820px)"
+        overlay="rgba(0,0,0,.18)"
+        maxW="min(85vw, 1200px)"
+        maxH="min(70vh, 800px)"
         minW="360px"
         minH="220px"
-        opacity={0.92}
+        opacity={0.9}
       />
 
       {/* 동기화 표시 */}
@@ -523,7 +452,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         </div>
       )}
 
-      <h1 className="dk-main-title title-pulse" style={{ textAlign: "center", marginTop: "0.5rem" }}>
+      <h1 className="dk-main-title" style={{ textAlign: "center", marginTop: "0.5rem" }}>
         도깨비 드론축구단 재고관리
       </h1>
 
@@ -535,56 +464,63 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           placeholder="검색..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          aria-label="검색"
         />
 
-        <button className="btn btn-default" onClick={() => navigate("/logs")}>📘 기록</button>
+        <button className="btn btn-default" onClick={() => navigate("/logs")}>
+          📘 기록
+        </button>
 
-        {!isAdmin ? (
+        {/* 📦 데이터 드롭다운 (내보내기/가져오기) */}
+        <div className="data-menu-wrap" ref={dataMenuRef}>
           <button
             className="btn btn-default"
-            onClick={() => {
-              const pw = prompt("관리자 비밀번호:");
-              if (pw === "2500") {
-                saveLocalAdmin(true);
-                window.location.reload();
-              } else {
-                toast.error("틀렸습니다.");
-              }
-            }}
+            onClick={() => setDataMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={dataMenuOpen}
           >
-            🔑 로그인
+            📦 데이터
           </button>
+          {dataMenuOpen && (
+            <div className="data-menu" role="menu">
+              <button
+                className="menu-item"
+                onClick={() => {
+                  exportInventoryExcel();
+                  setDataMenuOpen(false);
+                }}
+              >
+                📤 재고 Excel 내보내기
+              </button>
+
+              {/* 베타: 가져오기 비활성화 + 밑줄 안내 */}
+              <button
+                className="menu-item"
+                disabled
+                title="개발중..."
+                style={{ opacity: 0.55, textDecoration: "underline dotted", cursor: "not-allowed" }}
+              >
+                📥 가져오기 (미완)
+              </button>
+            </div>
+          )}
+        </div>
+
+        {!isAdmin ? (
+          <>
+            <a className="btn btn-outline" href="#/login">🔑 로그인</a>
+            <span className="muted" style={{ fontSize: 13 }}>👀 뷰어 모드</span>
+          </>
         ) : (
           <>
             <button
               className="btn btn-default"
-              onClick={() => { saveLocalAdmin(false); window.location.reload(); }}
+              onClick={() => {
+                saveLocalAdmin(false);
+                window.location.reload();
+              }}
             >
               🚪 로그아웃
             </button>
-
-            {/* 📦 데이터 통합 버튼 */}
-            <div className="data-menu-wrap">
-              <button
-                className="btn btn-default"
-                onClick={() => setDataMenuOpen((v) => !v)}
-                aria-haspopup="menu"
-                aria-expanded={dataMenuOpen}
-              >
-                📦 데이터
-              </button>
-              {dataMenuOpen && (
-                <div className="data-menu" role="menu" onMouseLeave={() => setDataMenuOpen(false)}>
-                  <button className="menu-item" role="menuitem" onClick={() => { setDataMenuOpen(false); exportInventoryExcel(); }}>
-                    📤 재고 Excel 내보내기
-                  </button>
-                  <button className="menu-item" role="menuitem" onClick={() => { setDataMenuOpen(false); triggerImport(); }}>
-                    --⤴️ CSV/XLSX 가져오기-- 미완
-                  </button>
-                </div>
-              )}
-            </div>
           </>
         )}
       </div>
@@ -594,7 +530,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         <div className="search-result" style={{ margin: "10px auto" }}>
           <h3 style={{ margin: 0, marginBottom: 6 }}>🔍 검색 결과</h3>
           {aggregated.length === 0 ? (
-            <p className="muted">검색된 결과가 없습니다.</p>
+            <p style={{ color: "#9ca3af" }}>검색된 결과가 없습니다.</p>
           ) : (
             <>
               <ul style={{ listStyle: "disc inside" }}>
@@ -640,7 +576,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         </div>
       )}
 
-      {/* 장소 카드 그리드 */}
+      {/* 장소 카드들 */}
       <div className="cards-grid">
         {locations.map((loc) => (
           <div
@@ -648,10 +584,17 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
             className="card fixed"
             ref={(el) => { if (el) cardRefs.current[loc] = el; }}
           >
-            <div className="card-head" onClick={() => setOpenPanel({ kind: "loc", loc })} style={{ cursor: "zoom-in" }}>
+            <div
+              className="card-head"
+              onClick={() => setOpenPanel({ kind: "loc", loc })}
+              style={{ cursor: "zoom-in" }}
+            >
               <h2>{loc}</h2>
               {isAdmin && (
-                <button className="btn btn-default" onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}>
+                <button
+                  className="btn btn-default"
+                  onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}
+                >
                   +추가
                 </button>
               )}
@@ -674,21 +617,18 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                               if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
                             }}
                           >
-                            {/* 텍스트 블록 (항상 앞줄/왼쪽, 줄바꿈 우선) */}
                             <div className="item-text">
-                              <div className="item-name">
+                              <span className="item-name">
                                 {it.name} <span className="item-count">({it.count}개)</span>
-                              </div>
+                              </span>
                               {it.note && <div className="item-note">특이사항: {it.note}</div>}
                             </div>
-
-                            {/* 액션 블록 (좁은 화면에선 자동으로 다음 줄로 감김) */}
                             {isAdmin && (
                               <div className="item-actions">
-                                <button className="btn btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋</button>
-                                <button className="btn btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－</button>
-                                <button className="btn btn-compact" onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
-                                <button className="btn btn-compact" onClick={(e) => { e.stopPropagation(); handleEditItemNote(loc, cat, sub, idx); }}>📝 메모</button>
+                                <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋</button>
+                                <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－</button>
+                                <button className="btn btn-default btn-compact" onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
+                                <button className="btn btn-default btn-compact" onClick={(e) => { e.stopPropagation(); handleEditItemNote(loc, cat, sub, idx); }}>📝 메모</button>
                               </div>
                             )}
                           </li>
@@ -705,11 +645,21 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
       {/* 전체 요약 */}
       <section className="summary-bottom">
-        <div className="card summary-card" ref={(el) => { if (el) cardRefs.current["summary"] = el; }}>
-          <div className="card-head" onClick={() => setOpenPanel({ kind: "summary" })} style={{ cursor: "zoom-in" }}>
+        <div
+          className="card summary-card"
+          ref={(el) => { if (el) cardRefs.current["summary"] = el; }}
+        >
+          <div
+            className="card-head"
+            onClick={() => setOpenPanel({ kind: "summary" })}
+            style={{ cursor: "zoom-in" }}
+          >
             <h2>전체</h2>
             {isAdmin && (
-              <button className="btn btn-destructive" onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}>
+              <button
+                className="btn btn-destructive"
+                onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}
+              >
                 삭제
               </button>
             )}
@@ -725,17 +675,13 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                     <ul className="item-list">
                       {Object.entries(
                         locations.reduce((acc, L) => {
-                          (inventory[L]?.[cat]?.[sub] || []).forEach((it) => {
-                            acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                          });
+                          (inventory[L]?.[cat]?.[sub] || []).forEach((it) => { acc[it.name] = (acc[it.name] || 0) + (it.count || 0); });
                           return acc;
                         }, {})
                       ).map(([name, count]) => (
                         <li key={name} className="item-row">
                           <div className="item-text">
-                            <div className="item-name">
-                              {name} <span className="item-count">({count}개)</span>
-                            </div>
+                            <span className="item-name">{name} <span className="item-count">({count}개)</span></span>
                           </div>
                         </li>
                       ))}
@@ -748,12 +694,14 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         </div>
       </section>
 
-      {/* 팝업(확대 보기) */}
+      {/* 팝업 */}
       {openPanel && (
         <div className="overlay" onClick={() => setOpenPanel(null)}>
           <div className="popup-card pop-in" onClick={(e) => e.stopPropagation()}>
             <div className="popup-head">
-              <h3>{openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}</h3>
+              <h3>
+                {openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}
+              </h3>
               <button className="btn btn-outline" onClick={() => setOpenPanel(null)}>닫기</button>
             </div>
 
@@ -768,17 +716,13 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                         <ul className="item-list">
                           {Object.entries(
                             locations.reduce((acc, L) => {
-                              (inventory[L]?.[cat]?.[sub] || []).forEach((it) => {
-                                acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                              });
+                              (inventory[L]?.[cat]?.[sub] || []).forEach((it) => { acc[it.name] = (acc[it.name] || 0) + (it.count || 0); });
                               return acc;
                             }, {})
                           ).map(([name, count]) => (
                             <li key={name} className="item-row">
                               <div className="item-text">
-                                <div className="item-name">
-                                  {name} <span className="item-count">({count}개)</span>
-                                </div>
+                                <span className="item-name">{name} <span className="item-count">({count}개)</span></span>
                               </div>
                             </li>
                           ))}
@@ -798,17 +742,17 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                           {(inventory[openPanel.loc]?.[cat]?.[sub] || []).map((it, idx) => (
                             <li key={idx} className="item-row">
                               <div className="item-text">
-                                <div className="item-name">
+                                <span className="item-name">
                                   {it.name} <span className="item-count">({it.count}개)</span>
-                                </div>
+                                </span>
                                 {it.note && <div className="item-note">특이사항: {it.note}</div>}
                               </div>
                               {isAdmin && (
                                 <div className="item-actions">
-                                  <button className="btn btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>＋</button>
-                                  <button className="btn btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>－</button>
-                                  <button className="btn btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>✎ 이름</button>
-                                  <button className="btn btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>📝 메모</button>
+                                  <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>＋</button>
+                                  <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>－</button>
+                                  <button className="btn btn-default btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>✎ 이름</button>
+                                  <button className="btn btn-default btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>📝 메모</button>
                                 </div>
                               )}
                             </li>
@@ -828,25 +772,29 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 }
 
 /* =======================
- * LogsPage
+ * LogsPage — 내보내기 박스 추가
  * ======================= */
 function LogsPage({ logs, setLogs }) {
   const navigate = useNavigate();
+  const [filterDate, setFilterDate] = useState("");
+  const [exportOpen, setExportOpen] = useState(false);
+  const menuRef = useRef(null);
 
   useEffect(() => saveLocalLogs(logs), [logs]);
 
-  const [filterDate, setFilterDate] = useState("");
   const sorted = useMemo(() => [...logs].sort((a, b) => new Date(b.ts) - new Date(a.ts)), [logs]);
   const filteredList = filterDate ? sorted.filter((l) => l.ts.slice(0, 10) === filterDate) : sorted;
 
   const grouped = useMemo(
-    () => filteredList.reduce((acc, l) => {
-      const day = l.ts.slice(0, 10);
-      (acc[day] = acc[day] || []).push(l);
-      return acc;
-    }, {}),
+    () =>
+      filteredList.reduce((acc, l) => {
+        const day = l.ts.slice(0, 10);
+        (acc[day] = acc[day] || []).push(l);
+        return acc;
+      }, {}),
     [filteredList]
   );
+
   const dates = useMemo(() => Object.keys(grouped).sort((a, b) => new Date(b) - new Date(a)), [grouped]);
 
   function formatLabel(d) {
@@ -876,7 +824,7 @@ function LogsPage({ logs, setLogs }) {
       하위카테고리: l.subcategory,
       품목: l.item,
       증감: l.change,
-      메모: l.reason
+      메모: l.reason,
     }));
     const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(data));
     const blob = new Blob([csv], { type: "text/csv" });
@@ -895,7 +843,7 @@ function LogsPage({ logs, setLogs }) {
       하위카테고리: l.subcategory,
       품목: l.item,
       증감: l.change,
-      메모: l.reason
+      메모: l.reason,
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -903,27 +851,62 @@ function LogsPage({ logs, setLogs }) {
     XLSX.writeFile(wb, "기록.xlsx");
   }
 
+  // 외부 클릭으로 메뉴 닫기
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setExportOpen(false);
+      }
+    }
+    if (exportOpen) {
+      document.addEventListener("mousedown", onClickOutside);
+      document.addEventListener("touchstart", onClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("touchstart", onClickOutside);
+    };
+  }, [exportOpen]);
+
   return (
     <main className="app-main logs-container" style={{ minHeight: "100vh" }}>
       <div className="logs-header">
         <button className="btn btn-default back-btn" onClick={() => navigate("/")}>← 돌아가기</button>
         <h1 className="logs-title">📘 입출고 기록</h1>
+
         <div className="logs-controls">
           <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} />
           <button className="btn btn-outline" onClick={() => setFilterDate("")}>필터 해제</button>
-          <button className="btn btn-default" onClick={exportCSV}>📄 CSV</button>
-          <button className="btn btn-default" onClick={exportExcel}>📑 Excel</button>
+
+          <div className="data-menu-wrap" ref={menuRef}>
+            <button
+              className="btn btn-default"
+              onClick={() => setExportOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={exportOpen}
+            >
+              ⬇ 내보내기
+            </button>
+            {exportOpen && (
+              <div className="data-menu" role="menu">
+                <button className="menu-item" onClick={() => { exportCSV(); setExportOpen(false); }}>
+                  📄 CSV 내보내기
+                </button>
+                <button className="menu-item" onClick={() => { exportExcel(); setExportOpen(false); }}>
+                  📑 Excel 내보내기
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {dates.length === 0 ? (
-        <p className="muted">기록이 없습니다.</p>
+        <p style={{ color: "#9ca3af" }}>기록이 없습니다.</p>
       ) : (
         dates.map((d) => (
           <section key={d} style={{ marginBottom: "16px" }}>
-            <h2 style={{ borderBottom: "1px solid #4b5563", paddingBottom: "4px", margin: "0 0 8px" }}>
-              {formatLabel(d)}
-            </h2>
+            <h2 style={{ borderBottom: "1px solid #4b5563", paddingBottom: "4px", margin: "0 0 8px" }}>{formatLabel(d)}</h2>
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {grouped[d].map((l, i) => {
                 const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
@@ -936,9 +919,7 @@ function LogsPage({ logs, setLogs }) {
                       <div className={l.change > 0 ? "text-green" : "text-red"} style={{ marginTop: 4 }}>
                         {l.change > 0 ? ` 입고+${l.change}` : ` 출고-${-l.change}`}
                       </div>
-                      {l.reason && (
-                        <div className="log-note">메모: {l.reason}</div>
-                      )}
+                      {l.reason && <div className="log-note">메모: {l.reason}</div>}
                     </div>
                     <div className="log-actions">
                       <button className="btn btn-default" onClick={() => editReason(idx)}>{l.reason ? "메모 수정" : "메모 추가"}</button>
@@ -964,6 +945,7 @@ export default function AppWrapper() {
   const [logs, setLogs] = useState(getLocalLogs);
   const isAdmin = getLocalAdmin();
 
+  // 로그인 라우트용 래퍼: 로그인 배경을 white.png로 + 차콜 오버레이
   const LoginShell = ({ children }) => (
     <div style={{ position: "relative", minHeight: "100vh" }}>
       <FixedBg
@@ -975,12 +957,21 @@ export default function AppWrapper() {
         minH="180px"
         opacity={1}
       />
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          zIndex: -1
+        }}
+      />
       <div style={{ position: "relative", zIndex: 0 }}>{children}</div>
     </div>
   );
 
   return (
     <>
+      {/* 토스트 */}
       <Toaster
         position="bottom-right"
         toastOptions={{
@@ -989,21 +980,22 @@ export default function AppWrapper() {
             color: "#fff",
             fontWeight: 600,
             borderRadius: "1rem",
-            fontSize: "1.04rem",
-            WebkitFontSmoothing: "antialiased",
-            MozOsxFontSmoothing: "grayscale"
+            fontSize: "1.08rem",
           },
           success: { style: { background: "#181a20", color: "#2dd4bf" } },
-          error: { style: { background: "#181a20", color: "#ee3a60" } }
+          error: { style: { background: "#181a20", color: "#ee3a60" } },
         }}
       />
 
       <Router>
         <Routes>
-          {!isAdmin ? (
-            <Route
-              path="*"
-              element={
+          {/* 이미 관리자면 /login 접근 시 홈으로 리다이렉트 */}
+          <Route
+            path="/login"
+            element={
+              isAdmin ? (
+                <Navigate to="/" replace />
+              ) : (
                 <LoginShell>
                   <LoginPage
                     onLogin={(pw) => {
@@ -1016,41 +1008,38 @@ export default function AppWrapper() {
                     }}
                   />
                 </LoginShell>
-              }
-            />
-          ) : (
-            <>
-              <Route
-                path="/"
-                element={
-                  <Home
-                    inventory={inventory}
-                    setInventory={setInventory}
-                    searchTerm={searchTerm}
-                    setSearchTerm={setSearchTerm}
-                    logs={logs}
-                    setLogs={setLogs}
-                    isAdmin={isAdmin}
-                  />
-                }
+              )
+            }
+          />
+          <Route
+            path="/"
+            element={
+              <Home
+                inventory={inventory}
+                setInventory={setInventory}
+                searchTerm={searchTerm}
+                setSearchTerm={setSearchTerm}
+                logs={logs}
+                setLogs={setLogs}
+                isAdmin={isAdmin}
               />
-              <Route path="/logs" element={<LogsPage logs={logs} setLogs={setLogs} />} />
-              <Route
-                path="*"
-                element={
-                  <Home
-                    inventory={inventory}
-                    setInventory={setInventory}
-                    searchTerm={searchTerm}
-                    setSearchTerm={setSearchTerm}
-                    logs={logs}
-                    setLogs={setLogs}
-                    isAdmin={isAdmin}
-                  />
-                }
+            }
+          />
+          <Route path="/logs" element={<LogsPage logs={logs} setLogs={setLogs} />} />
+          <Route
+            path="*"
+            element={
+              <Home
+                inventory={inventory}
+                setInventory={setInventory}
+                searchTerm={searchTerm}
+                setSearchTerm={setSearchTerm}
+                logs={logs}
+                setLogs={setLogs}
+                isAdmin={isAdmin}
               />
-            </>
-          )}
+            }
+          />
         </Routes>
       </Router>
     </>

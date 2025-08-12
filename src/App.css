@@ -268,6 +268,71 @@ summary::-webkit-details-marker{ display:none }
 .text-green{ color:#2fd3a4 }
 .text-red{ color:#f27784 }
 
+/* === 로그인 화면: 입력/버튼 한 줄 배치 + 미세 애니메이션 === */
+.login-pop{
+  animation: loginPop .28s cubic-bezier(.22,.61,.36,1);
+  box-shadow: 0 18px 50px rgba(0,0,0,.38);
+}
+@keyframes loginPop{
+  0%{ transform: translateY(6px) scale(.985); opacity: 0 }
+  100%{ transform: none; opacity: 1 }
+}
+
+/* 인풋 오른쪽에 컨트롤 묶음을 붙이기 위한 행 레이아웃 */
+.login-input-row--with-actions{
+  display: grid;
+  grid-template-columns: 1fr auto; /* 왼쪽 인풋 크게, 오른쪽 컨트롤 좁게 */
+  gap: 8px;
+  align-items: center;
+}
+
+/* 오른쪽 컨트롤(👁️ + 일반 열람) 묶음 */
+.login-inline-actions{
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+/* 아이(eye) 버튼은 살짝 컴팩트 */
+.login-eye{
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+/* 일반 열람 버튼은 손가락 도달성 넉넉하게 */
+.login-viewer{
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-weight: 800;
+}
+
+/* 모바일(<=520px)에서는 세로 스택으로 바꾸고 터치 영역 확보 */
+@media (max-width: 520px){
+  .login-input-row--with-actions{
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .login-inline-actions{
+    justify-content: space-between; /* 좌우로 넓게 */
+  }
+  .login-eye, .login-viewer{
+    flex: 1;                 /* 두 버튼이 같은 폭으로 */
+    justify-content: center; /* 텍스트/아이콘 가운데 정렬 */
+  }
+}
+
+/* 로그인 오버레이 대비(배경이 밝을 때 글씨 가독성↑) - 선택적 */
+.login-wrap::before{
+  content:"";
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.50); /* 차콜 반투명 */
+  z-index: -1; /* 컨텐츠 위로 올라오지 않게 */
+  pointer-events: none;
+  transition: background .25s ease;
+}
+
+
 /* ===== 팝업/오버레이 (부드러운 블러 + 자연 스크롤) ===== */
 .overlay{
   position:fixed; inset:0;
