@@ -27,6 +27,7 @@ const subcategories = {
 function getLocalInventory() {
   const d = localStorage.getItem("do-kkae-bi-inventory");
   if (d) return JSON.parse(d);
+  // 기본 구조 생성
   const base = {};
   locations.forEach((loc) => {
     base[loc] = {};
@@ -172,16 +173,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       document.removeEventListener("touchstart", onClickOutside);
     };
   }, [dataMenuOpen]);
-
-  /* --- Firebase 구독 (필요 시 활성화) ---
-  useEffect(() => {
-    const invRef = ref(db, "inventory/");
-    const logRef = ref(db, "logs/");
-    const unsubInv = onValue(invRef, (s) => { if (s.exists()) setInventory(s.val()); });
-    const unsubLog = onValue(logRef, (s) => { if (s.exists()) setLogs(s.val()); });
-    return () => { unsubInv(); unsubLog(); };
-  }, [setInventory, setLogs]);
-  */
 
   /* --- 팝업 열릴 때 해당 카드로 자동 스크롤 --- */
   useEffect(() => {
@@ -496,32 +487,27 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
               <button
                 className="menu-item"
                 disabled
-                title="개발중..."
+                title="베타: 아직 미구현"
                 style={{ opacity: 0.55, textDecoration: "underline dotted", cursor: "not-allowed" }}
               >
-                📥 가져오기 (미완)
+                📥 가져오기 (베타)
               </button>
             </div>
           )}
         </div>
 
-        {!isAdmin ? (
-          <>
-            <a className="btn btn-outline" href="#/login">🔑 로그인</a>
-            <span className="muted" style={{ fontSize: 13 }}>👀 뷰어 모드</span>
-          </>
-        ) : (
-          <>
-            <button
-              className="btn btn-default"
-              onClick={() => {
-                saveLocalAdmin(false);
-                window.location.reload();
-              }}
-            >
-              🚪 로그아웃
-            </button>
-          </>
+        {/* 🚪 로그아웃 (관리자일 때만 노출) */}
+        {isAdmin && (
+          <button
+            className="btn btn-default"
+            onClick={() => {
+              saveLocalAdmin(false);
+              window.location.hash = "#/login";
+              window.location.reload();
+            }}
+          >
+            🚪 로그아웃
+          </button>
         )}
       </div>
 
@@ -772,7 +758,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 }
 
 /* =======================
- * LogsPage — 내보내기 박스 추가
+ * LogsPage — 내보내기 박스
  * ======================= */
 function LogsPage({ logs, setLogs }) {
   const navigate = useNavigate();
@@ -961,7 +947,7 @@ export default function AppWrapper() {
         style={{
           position: "absolute",
           inset: 0,
-          background: "rgba(15, 23, 42, 0.6)",
+          background: "rgba(15, 23, 42, 0.6)", // 차콜 오버레이
           zIndex: -1
         }}
       />
@@ -989,57 +975,51 @@ export default function AppWrapper() {
 
       <Router>
         <Routes>
-          {/* 이미 관리자면 /login 접근 시 홈으로 리다이렉트 */}
-          <Route
-            path="/login"
-            element={
-              isAdmin ? (
-                <Navigate to="/" replace />
-              ) : (
-                <LoginShell>
-                  <LoginPage
-                    onLogin={(pw) => {
-                      if (pw === "2500") {
-                        saveLocalAdmin(true);
-                        window.location.reload();
-                      } else {
-                        toast.error("비밀번호가 틀렸습니다.");
-                      }
-                    }}
+          {/* 무조건 로그인 먼저: 미인증이면 어떤 경로로 와도 /login */}
+          {!isAdmin ? (
+            <>
+              <Route
+                path="/login"
+                element={
+                  <LoginShell>
+                    <LoginPage
+                      onLogin={(pw) => {
+                        if (pw === "2500") {
+                          saveLocalAdmin(true);
+                          window.location.hash = "#/"; // HashRouter 강제 이동
+                          window.location.reload();     // 상태 클린
+                        } else {
+                          toast.error("비밀번호가 틀렸습니다.");
+                        }
+                      }}
+                    />
+                  </LoginShell>
+                }
+              />
+              <Route path="*" element={<Navigate to="/login" replace />} />
+            </>
+          ) : (
+            <>
+              {/* 이미 관리자면 /login 접근 시 홈으로 리다이렉트 */}
+              <Route path="/login" element={<Navigate to="/" replace />} />
+              <Route
+                path="/"
+                element={
+                  <Home
+                    inventory={inventory}
+                    setInventory={setInventory}
+                    searchTerm={searchTerm}
+                    setSearchTerm={setSearchTerm}
+                    logs={logs}
+                    setLogs={setLogs}
+                    isAdmin={isAdmin}
                   />
-                </LoginShell>
-              )
-            }
-          />
-          <Route
-            path="/"
-            element={
-              <Home
-                inventory={inventory}
-                setInventory={setInventory}
-                searchTerm={searchTerm}
-                setSearchTerm={setSearchTerm}
-                logs={logs}
-                setLogs={setLogs}
-                isAdmin={isAdmin}
+                }
               />
-            }
-          />
-          <Route path="/logs" element={<LogsPage logs={logs} setLogs={setLogs} />} />
-          <Route
-            path="*"
-            element={
-              <Home
-                inventory={inventory}
-                setInventory={setInventory}
-                searchTerm={searchTerm}
-                setSearchTerm={setSearchTerm}
-                logs={logs}
-                setLogs={setLogs}
-                isAdmin={isAdmin}
-              />
-            }
-          />
+              <Route path="/logs" element={<LogsPage logs={logs} setLogs={setLogs} />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </>
+          )}
         </Routes>
       </Router>
     </>
