@@ -7,7 +7,7 @@ import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
 
 /* ==== Firebase (실시간 동기화) ==== */
-import { db, ref, set, onValue } from "./firebase";
+import { db, ref, set, onValue, runTransaction } from "./firebase";
 
 /* =======================
  * 상수 정의
@@ -58,12 +58,6 @@ function getLocalAdmin() {
 }
 function saveLocalAdmin(val) {
   localStorage.setItem("do-kkae-bi-admin", val ? "true" : "false");
-}
-function getLocalUserId() {
-  return localStorage.getItem("do-kkae-bi-user-id") || "";
-}
-function getLocalUserName() {
-  return localStorage.getItem("do-kkae-bi-user-name") || "";
 }
 
 /* =======================
@@ -125,7 +119,7 @@ function FixedBg({
 /* =======================
  * Home
  * ======================= */
-function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLogs, isAdmin, userId, userName }) {
+function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLogs, isAdmin }) {
   const navigate = useNavigate();
   const categoryRefs = useRef({});
   const cardRefs = useRef({});
@@ -140,30 +134,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
   // 🔒 클라우드 → 로컬 적용 중인지(무한 루프 방지)
   const applyingCloudRef = useRef({ inv: false, logs: false });
-
-  /* --- 로컬/클라우드 동기화 --- */
-  useEffect(() => {
-    if (applyingCloudRef.current.inv) {
-      applyingCloudRef.current.inv = false;
-      return;
-    }
-    saveLocalInventory(inventory);
-    // 관리자만 클라우드 반영
-    if (isAdmin) {
-      set(ref(db, "inventory/"), inventory).catch(() => {});
-    }
-  }, [inventory, isAdmin]);
-
-  useEffect(() => {
-    if (applyingCloudRef.current.logs) {
-      applyingCloudRef.current.logs = false;
-      return;
-    }
-    saveLocalLogs(logs);
-    if (isAdmin) {
-      set(ref(db, "logs/"), logs).catch(() => {});
-    }
-  }, [logs, isAdmin]);
 
   /* --- (가시적인) 동기화 인디케이터 --- */
   useEffect(() => {
@@ -191,6 +161,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
   /* --- Firebase 실시간 구독 (읽기) --- */
   useEffect(() => {
+    // 읽기는 누구나 가능하게 두면, 비관리자도 최신 데이터 확인 가능
     const invRef = ref(db, "inventory/");
     const logRef = ref(db, "logs/");
 
@@ -200,6 +171,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       if (JSON.stringify(cloud) !== JSON.stringify(inventory)) {
         applyingCloudRef.current.inv = true;
         setInventory(cloud);
+        saveLocalInventory(cloud);
       }
     });
 
@@ -209,6 +181,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       if (JSON.stringify(cloud) !== JSON.stringify(logs)) {
         applyingCloudRef.current.logs = true;
         setLogs(cloud);
+        saveLocalLogs(cloud);
       }
     });
 
@@ -218,16 +191,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 초기에만 구독
-
-  /* --- 팝업 열릴 때 해당 카드로 자동 스크롤 --- */
-  useEffect(() => {
-    if (!openPanel) return;
-    const key = openPanel.kind === "summary" ? "summary" : openPanel.loc;
-    const el = cardRefs.current[key];
-    if (el && el.scrollIntoView) {
-      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-    }
-  }, [openPanel]);
 
   /* ====== 재고 엑셀 내보내기 ====== */
   function exportInventoryExcel() {
@@ -275,19 +238,40 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     XLSX.writeFile(wb, "재고현황.xlsx");
   }
 
-  /* ====== 수량 증감(1시간 병합) + 작업자 기록 ====== */
-  function handleUpdateItemCount(loc, cat, sub, idx, delta) {
+  /* ====== 공통: 서브 경로 쓰기 헬퍼 ====== */
+  const setSubArrayToCloud = (loc, cat, sub, arr) =>
+    set(ref(db, `inventory/${loc}/${cat}/${sub}`), arr).catch(() => {});
+
+  const setLogsToCloud = (nextLogs) =>
+    set(ref(db, "logs/"), nextLogs).catch(() => {});
+
+  /* ====== 수량 증감(1시간 병합) — 트랜잭션 적용 ====== */
+  async function handleUpdateItemCount(loc, cat, sub, idx, delta) {
     if (!isAdmin || delta === 0) return;
-    const itemName = inventory[loc][cat][sub][idx]?.name;
+    const itemName = inventory[loc]?.[cat]?.[sub]?.[idx]?.name;
     if (!itemName) return;
 
+    // 1) 로컬 즉시 반영(낙관적 업데이트)
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
       const it = inv[loc][cat][sub][idx];
-      if (it) it.count = Math.max(0, it.count + delta);
+      if (it) it.count = Math.max(0, (it.count || 0) + delta);
+      saveLocalInventory(inv);
       return inv;
     });
 
+    // 2) 클라우드: 해당 count만 트랜잭션 증감 (경쟁 덮어쓰기 방지)
+    const countRef = ref(db, `inventory/${loc}/${cat}/${sub}/${idx}/count`);
+    try {
+      await runTransaction(countRef, (curr) => {
+        const next = Math.max(0, (curr || 0) + delta);
+        return next;
+      });
+    } catch (e) {
+      // 실패 시 롤백 대신 서버 값 수신(onValue)에 맡김
+    }
+
+    // 3) 로그 병합 후 클라우드 반영
     const now = new Date();
     const ts = now.toISOString();
     const time = now.toLocaleString();
@@ -303,8 +287,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           change: arr[mergeIdx].change + delta,
           time,
           ts,
-          operatorId: userId,
-          operatorName: userName,
         };
       } else {
         arr.unshift({
@@ -317,20 +299,21 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           reason: "입출고",
           time,
           ts,
-          operatorId: userId,
-          operatorName: userName,
         });
       }
+      saveLocalLogs(arr);
+      if (isAdmin) setLogsToCloud(arr);
       return arr;
     });
   }
 
-  /* ====== 품목 이름 수정 ====== */
+  /* ====== 품목 이름 수정 (서브경로 전체 덮어쓰기) ====== */
   function handleEditItemName(loc, cat, sub, idx) {
     if (!isAdmin) return;
     const oldName = inventory[loc][cat][sub][idx].name;
     const newName = prompt("새 품목명을 입력하세요:", oldName);
     if (!newName || newName === oldName) return;
+
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
       // 동일 하위카테고리 내 모든 장소에 이름 일괄 반영
@@ -339,11 +322,16 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           item.name === oldName ? { ...item, name: newName } : item
         );
       });
+      saveLocalInventory(inv);
+      // 클라우드에 위치별 서브배열만 반영
+      if (isAdmin) {
+        locations.forEach((L) => setSubArrayToCloud(L, cat, sub, inv[L][cat][sub]));
+      }
       return inv;
     });
   }
 
-  /* ====== 품목 메모 ====== */
+  /* ====== 품목 메모 (서브경로 저장) ====== */
   function handleEditItemNote(loc, cat, sub, idx) {
     if (!isAdmin) return;
     setInventory((prev) => {
@@ -352,11 +340,13 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
       const note = prompt("특이사항을 입력하세요:", it.note || "");
       if (note === null) return prev;
       it.note = note;
+      saveLocalInventory(inv);
+      if (isAdmin) setSubArrayToCloud(loc, cat, sub, inv[loc][cat][sub]);
       return inv;
     });
   }
 
-  /* ====== 신규 품목 추가 ====== */
+  /* ====== 신규 품목 추가 (서브경로 저장) ====== */
   function handleAddNewItem(loc) {
     if (!isAdmin) return;
     const cat = prompt("상위 카테고리 선택:\n" + Object.keys(subcategories).join(", "));
@@ -375,11 +365,16 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         if (!inv[L][cat][sub]) inv[L][cat][sub] = [];
         inv[L][cat][sub].push({ name, count: L === loc ? count : 0, note: "" });
       });
+      saveLocalInventory(inv);
+      if (isAdmin) {
+        // 위치별 해당 서브배열만 클라우드 반영
+        locations.forEach((L) => setSubArrayToCloud(L, cat, sub, inv[L][cat][sub]));
+      }
       return inv;
     });
   }
 
-  /* ====== 품목 전체 삭제(이름으로) ====== */
+  /* ====== 품목 전체 삭제(이름으로) — 여러 서브경로 저장 ====== */
   function handleDeleteItem() {
     if (!isAdmin) return;
     const name = prompt("삭제할 품목 이름을 입력하세요:");
@@ -399,35 +394,46 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
     setInventory((prev) => {
       const newInv = JSON.parse(JSON.stringify(prev));
+      const touched = [];
       locations.forEach((L) => {
         Object.keys(newInv[L]).forEach((cat) => {
           Object.keys(newInv[L][cat]).forEach((sub) => {
-            newInv[L][cat][sub] = (newInv[L][cat][sub] || []).filter((item) => item.name !== name);
+            const before = newInv[L][cat][sub] || [];
+            const after = before.filter((item) => item.name !== name);
+            if (after.length !== before.length) {
+              newInv[L][cat][sub] = after;
+              touched.push([L, cat, sub, after]);
+            }
           });
         });
       });
+      saveLocalInventory(newInv);
+      if (isAdmin) touched.forEach(([L, cat, sub, arr]) => setSubArrayToCloud(L, cat, sub, arr));
       return newInv;
     });
 
     const now = new Date(),
       ts = now.toISOString(),
       time = now.toLocaleString();
-    setLogs((prev) => [
-      {
-        key: `전체||${name}|OUT`,
-        location: "전체",
-        category: "삭제",
-        subcategory: "",
-        item: name,
-        change: -totalCount,
-        reason: "해당 품목은 총괄 삭제됨",
-        time,
-        ts,
-        operatorId: userId,
-        operatorName: userName,
-      },
-      ...prev,
-    ]);
+    setLogs((prev) => {
+      const next = [
+        {
+          key: `전체||${name}|OUT`,
+          location: "전체",
+          category: "삭제",
+          subcategory: "",
+          item: name,
+          change: -totalCount,
+          reason: "해당 품목은 총괄 삭제됨",
+          time,
+          ts,
+        },
+        ...prev,
+      ];
+      saveLocalLogs(next);
+      if (isAdmin) setLogsToCloud(next);
+      return next;
+    });
   }
 
   /* ====== 검색 / 결과 집계 ====== */
@@ -456,7 +462,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     return Object.values(map);
   }, [filtered]);
 
-  /* ====== 검색 결과 클릭 → 해당 위치로 ====== */
+  /* ====== 검색 결과 클릭 → 해당 위치로 펼치고 스크롤 ====== */
   function scrollToCategory(loc, cat, sub, itemName) {
     Object.keys(categoryRefs.current).forEach((k) => {
       if (k.startsWith(`${loc}-`)) {
@@ -535,7 +541,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                 📤 재고 Excel 내보내기
               </button>
 
-              {/* 베타: 가져오기 비활성화 */}
+              {/* 베타: 가져오기 비활성화 + 밑줄 안내 */}
               <button
                 className="menu-item"
                 disabled
@@ -548,7 +554,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           )}
         </div>
 
-        {/* 🚪 로그아웃 (관리자만 노출) */}
+        {/* 🚪 로그아웃 (관리자일 때만 노출) */}
         {isAdmin && (
           <button
             className="btn btn-default"
@@ -810,7 +816,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 }
 
 /* =======================
- * LogsPage — ID/이름 포함 내보내기
+ * LogsPage — ID/이름 필드는 비활성, 배열 기반 내보내기/편집
  * ======================= */
 function LogsPage({ logs, setLogs }) {
   const navigate = useNavigate();
@@ -846,19 +852,20 @@ function LogsPage({ logs, setLogs }) {
     const arr = [...logs];
     arr[i].reason = note;
     setLogs(arr);
+    set(ref(db, "logs/"), arr).catch(() => {});
   }
 
   function deleteLog(i) {
     if (window.confirm("삭제하시겠습니까?")) {
-      setLogs((prev) => prev.filter((_, j) => j !== i));
+      const next = logs.filter((_, j) => j !== i);
+      setLogs(next);
+      set(ref(db, "logs/"), next).catch(() => {});
     }
   }
 
   function exportCSV() {
     const data = sorted.map((l) => ({
       시간: l.time,
-      ID: l.operatorId || "",
-      이름: l.operatorName || "",
       장소: l.location,
       상위카테고리: l.category,
       하위카테고리: l.subcategory,
@@ -878,8 +885,6 @@ function LogsPage({ logs, setLogs }) {
   function exportExcel() {
     const data = sorted.map((l) => ({
       시간: l.time,
-      ID: l.operatorId || "",
-      이름: l.operatorName || "",
       장소: l.location,
       상위카테고리: l.category,
       하위카테고리: l.subcategory,
@@ -961,9 +966,6 @@ function LogsPage({ logs, setLogs }) {
                       <div className={l.change > 0 ? "text-green" : "text-red"} style={{ marginTop: 4 }}>
                         {l.change > 0 ? ` 입고+${l.change}` : ` 출고-${-l.change}`}
                       </div>
-                      <div className="muted" style={{ marginTop: 4 }}>
-                        👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}
-                      </div>
                       {l.reason && <div className="log-note">메모: {l.reason}</div>}
                     </div>
                     <div className="log-actions">
@@ -989,8 +991,6 @@ export default function AppWrapper() {
   const [searchTerm, setSearchTerm] = useState("");
   const [logs, setLogs] = useState(getLocalLogs);
   const isAdmin = getLocalAdmin();
-  const [userId, setUserId] = useState(getLocalUserId);
-  const [userName, setUserName] = useState(getLocalUserName);
 
   // 로그인 라우트용 래퍼: 로그인 배경을 white.png로 + 차콜 오버레이
   const LoginShell = ({ children }) => (
@@ -1044,17 +1044,13 @@ export default function AppWrapper() {
                 element={
                   <LoginShell>
                     <LoginPage
-                      onLogin={({ pw, uid, name }) => {
-                        if (pw === "2500" && uid && name) {
+                      onLogin={(pw) => {
+                        if (pw === "2500") {
                           saveLocalAdmin(true);
-                          localStorage.setItem("do-kkae-bi-user-id", uid);
-                          localStorage.setItem("do-kkae-bi-user-name", name);
-                          setUserId(uid);
-                          setUserName(name);
                           window.location.hash = "#/"; // HashRouter 강제 이동
                           window.location.reload();     // 상태 클린
                         } else {
-                          toast.error("입력 정보를 확인해 주세요.");
+                          toast.error("비밀번호가 틀렸습니다.");
                         }
                       }}
                     />
@@ -1078,8 +1074,6 @@ export default function AppWrapper() {
                     logs={logs}
                     setLogs={setLogs}
                     isAdmin={isAdmin}
-                    userId={userId}
-                    userName={userName}
                   />
                 }
               />
