@@ -1,7 +1,6 @@
 // src/firebase.js
-// Firebase Realtime Database 연결 헬퍼
-// 👉 아래 config 값은 Firebase 콘솔에서 복사해서 넣어줘.
-//    (Project settings > Your apps > Firebase SDK snippet > Config)
+// Firebase Realtime Database + Anonymous Auth
+// 👉 콘솔에서 프로젝트 설정값(config)만 채워 넣으면 바로 동작
 
 import { initializeApp } from "firebase/app";
 import {
@@ -10,6 +9,12 @@ import {
   set as _set,
   onValue as _onValue,
 } from "firebase/database";
+
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged,
+} from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "YOUR_API_KEY",
@@ -24,8 +29,12 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-export { db };
+// 🔐 Anonymous Auth: 규칙에서 ".write": "auth != null" 허용을 만족시킴
+const auth = getAuth(app);
+signInAnonymously(auth).catch(() => { /* 실패해도 앱은 보여주되 쓰기만 막힘 */ });
+onAuthStateChanged(auth, () => { /* 필요시 상태 변화 처리 가능 */ });
+
+export { db, auth };
 export const ref = _ref;
 export const set = _set;
 export const onValue = _onValue;
-

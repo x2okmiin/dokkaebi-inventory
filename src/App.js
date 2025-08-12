@@ -59,6 +59,12 @@ function getLocalAdmin() {
 function saveLocalAdmin(val) {
   localStorage.setItem("do-kkae-bi-admin", val ? "true" : "false");
 }
+function getLocalUserId() {
+  return localStorage.getItem("do-kkae-bi-user-id") || "";
+}
+function getLocalUserName() {
+  return localStorage.getItem("do-kkae-bi-user-name") || "";
+}
 
 /* =======================
  * 고정 배경
@@ -119,7 +125,7 @@ function FixedBg({
 /* =======================
  * Home
  * ======================= */
-function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLogs, isAdmin }) {
+function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLogs, isAdmin, userId, userName }) {
   const navigate = useNavigate();
   const categoryRefs = useRef({});
   const cardRefs = useRef({});
@@ -185,14 +191,12 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
   /* --- Firebase 실시간 구독 (읽기) --- */
   useEffect(() => {
-    // 로그인 상태에 상관없이 읽기는 허용하면, 비관리자도 최신 데이터 보기 가능
     const invRef = ref(db, "inventory/");
     const logRef = ref(db, "logs/");
 
     const unsubInv = onValue(invRef, (snap) => {
       if (!snap.exists()) return;
       const cloud = snap.val();
-      // 현재와 다를 때만 적용
       if (JSON.stringify(cloud) !== JSON.stringify(inventory)) {
         applyingCloudRef.current.inv = true;
         setInventory(cloud);
@@ -271,7 +275,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     XLSX.writeFile(wb, "재고현황.xlsx");
   }
 
-  /* ====== 수량 증감(자정 1시간 병합) ====== */
+  /* ====== 수량 증감(1시간 병합) + 작업자 기록 ====== */
   function handleUpdateItemCount(loc, cat, sub, idx, delta) {
     if (!isAdmin || delta === 0) return;
     const itemName = inventory[loc][cat][sub][idx]?.name;
@@ -299,6 +303,8 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           change: arr[mergeIdx].change + delta,
           time,
           ts,
+          operatorId: userId,
+          operatorName: userName,
         };
       } else {
         arr.unshift({
@@ -311,6 +317,8 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           reason: "입출고",
           time,
           ts,
+          operatorId: userId,
+          operatorName: userName,
         });
       }
       return arr;
@@ -415,6 +423,8 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         reason: "해당 품목은 총괄 삭제됨",
         time,
         ts,
+        operatorId: userId,
+        operatorName: userName,
       },
       ...prev,
     ]);
@@ -446,7 +456,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     return Object.values(map);
   }, [filtered]);
 
-  /* ====== 검색 결과 클릭 → 해당 위치로 펼치고 스크롤 ====== */
+  /* ====== 검색 결과 클릭 → 해당 위치로 ====== */
   function scrollToCategory(loc, cat, sub, itemName) {
     Object.keys(categoryRefs.current).forEach((k) => {
       if (k.startsWith(`${loc}-`)) {
@@ -525,7 +535,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                 📤 재고 Excel 내보내기
               </button>
 
-              {/* 베타: 가져오기 비활성화 + 밑줄 안내 */}
+              {/* 베타: 가져오기 비활성화 */}
               <button
                 className="menu-item"
                 disabled
@@ -538,7 +548,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           )}
         </div>
 
-        {/* 🚪 로그아웃 (관리자일 때만 노출) */}
+        {/* 🚪 로그아웃 (관리자만 노출) */}
         {isAdmin && (
           <button
             className="btn btn-default"
@@ -800,7 +810,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 }
 
 /* =======================
- * LogsPage — 내보내기 박스
+ * LogsPage — ID/이름 포함 내보내기
  * ======================= */
 function LogsPage({ logs, setLogs }) {
   const navigate = useNavigate();
@@ -847,6 +857,8 @@ function LogsPage({ logs, setLogs }) {
   function exportCSV() {
     const data = sorted.map((l) => ({
       시간: l.time,
+      ID: l.operatorId || "",
+      이름: l.operatorName || "",
       장소: l.location,
       상위카테고리: l.category,
       하위카테고리: l.subcategory,
@@ -866,6 +878,8 @@ function LogsPage({ logs, setLogs }) {
   function exportExcel() {
     const data = sorted.map((l) => ({
       시간: l.time,
+      ID: l.operatorId || "",
+      이름: l.operatorName || "",
       장소: l.location,
       상위카테고리: l.category,
       하위카테고리: l.subcategory,
@@ -947,6 +961,9 @@ function LogsPage({ logs, setLogs }) {
                       <div className={l.change > 0 ? "text-green" : "text-red"} style={{ marginTop: 4 }}>
                         {l.change > 0 ? ` 입고+${l.change}` : ` 출고-${-l.change}`}
                       </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}
+                      </div>
                       {l.reason && <div className="log-note">메모: {l.reason}</div>}
                     </div>
                     <div className="log-actions">
@@ -972,6 +989,8 @@ export default function AppWrapper() {
   const [searchTerm, setSearchTerm] = useState("");
   const [logs, setLogs] = useState(getLocalLogs);
   const isAdmin = getLocalAdmin();
+  const [userId, setUserId] = useState(getLocalUserId);
+  const [userName, setUserName] = useState(getLocalUserName);
 
   // 로그인 라우트용 래퍼: 로그인 배경을 white.png로 + 차콜 오버레이
   const LoginShell = ({ children }) => (
@@ -1025,13 +1044,17 @@ export default function AppWrapper() {
                 element={
                   <LoginShell>
                     <LoginPage
-                      onLogin={(pw) => {
-                        if (pw === "2500") {
+                      onLogin={({ pw, uid, name }) => {
+                        if (pw === "2500" && uid && name) {
                           saveLocalAdmin(true);
+                          localStorage.setItem("do-kkae-bi-user-id", uid);
+                          localStorage.setItem("do-kkae-bi-user-name", name);
+                          setUserId(uid);
+                          setUserName(name);
                           window.location.hash = "#/"; // HashRouter 강제 이동
                           window.location.reload();     // 상태 클린
                         } else {
-                          toast.error("비밀번호가 틀렸습니다.");
+                          toast.error("입력 정보를 확인해 주세요.");
                         }
                       }}
                     />
@@ -1055,6 +1078,8 @@ export default function AppWrapper() {
                     logs={logs}
                     setLogs={setLogs}
                     isAdmin={isAdmin}
+                    userId={userId}
+                    userName={userName}
                   />
                 }
               />
