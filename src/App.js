@@ -43,7 +43,6 @@ function getLocalUserName() {
 /* =======================
  * 유틸
  * ======================= */
-// 객체 → 배열 변환(helper) : {id:{...}, ...} → [{id, ...}, ...]
 const entriesToList = (obj) =>
   Object.entries(obj || {}).map(([id, v]) => ({ id, ...(v || {}) }));
 
@@ -128,7 +127,7 @@ function Home({ isAdmin, userId, userName }) {
   const dataMenuRef = useRef(null);
   const [openPanel, setOpenPanel] = useState(null);
 
-  /* --- (가시적인) 동기화 인디케이터 --- */
+  /* --- 동기화 인디케이터 --- */
   useEffect(() => {
     setSyncing(true);
     const t = setTimeout(() => setSyncing(false), 600);
@@ -228,13 +227,11 @@ function Home({ isAdmin, userId, userName }) {
   async function handleUpdateItemCount(loc, cat, sub, itemId, delta) {
     if (!isAdmin || !itemId || !delta) return;
     try {
-      // 트랜잭션: count만 동시성 안전하게 변경
       await runTransaction(ref(db, `${itemPath(loc, cat, sub, itemId)}/count`), (cur) => {
         const next = Math.max(0, Number(cur || 0) + delta);
         return next;
       });
 
-      // 로그 push
       const { ts, time } = nowMeta();
       await push(ref(db, "logs"), {
         ts,
@@ -251,7 +248,7 @@ function Home({ isAdmin, userId, userName }) {
       });
     } catch (e) {
       console.error(e);
-      toast.error("수량 변경 실패");
+      toast.error(`수량 변경 실패: ${e?.code || e?.message || "unknown error"}`);
     }
   }
 
@@ -264,7 +261,7 @@ function Home({ isAdmin, userId, userName }) {
       await update(ref(db, itemPath(loc, cat, sub, itemId)), { name: newName });
     } catch (e) {
       console.error(e);
-      toast.error("이름 수정 실패");
+      toast.error(`이름 수정 실패: ${e?.code || e?.message || "unknown error"}`);
     }
   }
 
@@ -277,35 +274,85 @@ function Home({ isAdmin, userId, userName }) {
       await update(ref(db, itemPath(loc, cat, sub, itemId)), { note });
     } catch (e) {
       console.error(e);
-      toast.error("메모 저장 실패");
+      toast.error(`메모 저장 실패: ${e?.code || e?.message || "unknown error"}`);
     }
   }
 
-  /* ====== 신규 품목 추가 (각 위치별로 생성) ====== */
+  /* ====== 신규 품목 추가 (멀티패스 update + 상세 에러 토스트 + 헬스체크 버튼 추가) ====== */
   async function handleAddNewItem(loc) {
     if (!isAdmin) return;
-    const cat = prompt("상위 카테고리 선택:\n" + Object.keys(subcategories).join(", "));
-    if (!cat || !subcategories[cat]) return toast.error("올바른 카테고리가 아닙니다.");
-    const sub = prompt("하위 카테고리 선택:\n" + subcategories[cat].join(", "));
-    if (!sub || !subcategories[cat].includes(sub)) return toast.error("올바른 하위카테고리가 아닙니다.");
-    const name = prompt("추가할 품목명:");
-    if (!name) return;
-    const count = Number(prompt("초기 수량 입력:"));
-    if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
 
     try {
-      // 모든 위치에 동일 품목 key 생성(이 위치는 count=입력값, 타 위치는 0)
-      for (const L of locations) {
-        const newRef = push(ref(db, `inventory/${L}/${cat}/${sub}`));
-        await set(newRef, {
-          name,
-          count: L === loc ? count : 0,
-          note: "",
-        });
+      // 1) 상위 카테고리 선택(번호/이름 허용)
+      const catList = Object.keys(subcategories);
+      const catPrompt = `상위 카테고리 선택 (번호 또는 이름 입력)\n${catList.map((c, i) => `${i + 1}. ${c}`).join("\n")}`;
+      let catRaw = prompt(catPrompt);
+      if (catRaw === null) return;
+      catRaw = catRaw.trim();
+      let cat = "";
+      if (/^\d+$/.test(catRaw)) {
+        const idx = parseInt(catRaw, 10) - 1;
+        cat = catList[idx];
+      } else {
+        cat = catList.find((c) => c.toLowerCase() === catRaw.toLowerCase()) || "";
       }
+      if (!cat) return toast.error("올바른 카테고리가 아닙니다.");
+
+      // 2) 하위 카테고리
+      const subs = subcategories[cat];
+      if (!subs || subs.length === 0) return toast.error("하위카테고리가 비어 있습니다.");
+      const subPrompt = `하위 카테고리 선택 (번호 또는 이름 입력)\n${subs.map((s, i) => `${i + 1}. ${s}`).join("\n")}`;
+      let subRaw = prompt(subPrompt);
+      if (subRaw === null) return;
+      subRaw = subRaw.trim();
+      let sub = "";
+      if (/^\d+$/.test(subRaw)) {
+        const idx = parseInt(subRaw, 10) - 1;
+        sub = subs[idx];
+      } else {
+        sub = subs.find((s) => s.toLowerCase() === subRaw.toLowerCase()) || "";
+      }
+      if (!sub) return toast.error("올바른 하위카테고리가 아닙니다.");
+
+      // 3) 이름/수량
+      let name = prompt("추가할 품목명:");
+      if (name === null) return;
+      name = name.trim();
+      if (!name) return toast.error("품목명이 비어 있습니다.");
+
+      let countStr = prompt("초기 수량 입력(0 이상의 정수):", "0");
+      if (countStr === null) return;
+      const count = Math.max(0, parseInt(String(countStr).trim(), 10));
+      if (!Number.isFinite(count)) return toast.error("수량이 올바르지 않습니다.");
+
+      // 4) 중복 검사(이름 기준, 대소문자 무시)
+      const hasDup = (L) => {
+        const itemsObj = inventory?.[L]?.[cat]?.[sub] || {};
+        return Object.values(itemsObj).some((it) => (it?.name || "").toLowerCase() === name.toLowerCase());
+      };
+      for (const L of locations) {
+        if (hasDup(L)) {
+          return toast.error(`'${L} > ${cat} > ${sub}'에 동일 이름이 이미 있습니다.`);
+        }
+      }
+
+      // 5) 공통 itemId 생성 → 모든 위치에 같은 키로 생성 (원자적 멀티패스 업데이트)
+      const commonKey = push(ref(db, "_keys")).key; // 임시 키 생성용
+      if (!commonKey) throw new Error("키 생성 실패");
+
+      const updates = {};
+      for (const L of locations) {
+        const path = `inventory/${L}/${cat}/${sub}/${commonKey}`;
+        updates[path] = { name, count: L === loc ? count : 0, note: "" };
+      }
+
+      await update(ref(db), updates);
+
+      toast.success(`추가 완료: [${cat} > ${sub}] ${name} (${loc} ${count}개, 타 위치 0개)`);
+      console.log("[추가성공]", { loc, cat, sub, name, count, commonKey });
     } catch (e) {
       console.error(e);
-      toast.error("품목 추가 실패");
+      toast.error(`품목 추가 실패: ${e?.code || e?.message || "unknown error"}`);
     }
   }
 
@@ -317,9 +364,8 @@ function Home({ isAdmin, userId, userName }) {
 
     try {
       let total = 0;
-      // 서버 상태 기준으로 스캔 후 해당 name 모두 삭제
       const inv = inventory || {};
-      const touched = [];
+      const updates = {};
       for (const L of locations) {
         const cats = inv[L] || {};
         for (const [cat, subs] of Object.entries(cats)) {
@@ -327,18 +373,14 @@ function Home({ isAdmin, userId, userName }) {
             for (const [id, it] of Object.entries(itemsObj || {})) {
               if ((it?.name || "") === name) {
                 total += Number(it?.count || 0);
-                touched.push({ L, cat, sub, id });
+                updates[`inventory/${L}/${cat}/${sub}/${id}`] = null;
               }
             }
           }
         }
       }
-      if (touched.length === 0) return toast.error("해당 품목이 존재하지 않습니다.");
+      if (!Object.keys(updates).length) return toast.error("해당 품목이 존재하지 않습니다.");
 
-      const updates = {};
-      touched.forEach(({ L, cat, sub, id }) => {
-        updates[`${itemPath(L, cat, sub, id)}`] = null; // 삭제
-      });
       await update(ref(db), updates);
 
       const { ts, time } = nowMeta();
@@ -356,7 +398,7 @@ function Home({ isAdmin, userId, userName }) {
       });
     } catch (e) {
       console.error(e);
-      toast.error("삭제 실패");
+      toast.error(`삭제 실패: ${e?.code || e?.message || "unknown error"}`);
     }
   }
 
@@ -406,6 +448,18 @@ function Home({ isAdmin, userId, userName }) {
       const el = categoryRefs.current[ik];
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
+  }
+
+  /* ====== RTDB 연결 헬스체크(임시 버튼) ====== */
+  async function healthcheck() {
+    try {
+      const { ts, time } = nowMeta();
+      await set(ref(db, `__healthcheck__/lastWrite`), { ts, time });
+      toast.success("RTDB 쓰기 OK");
+    } catch (e) {
+      console.error(e);
+      toast.error(`RTDB 쓰기 실패: ${e?.code || e?.message}`);
+    }
   }
 
   return (
@@ -479,16 +533,19 @@ function Home({ isAdmin, userId, userName }) {
         </div>
 
         {isAdmin && (
-          <button
-            className="btn btn-default"
-            onClick={() => {
-              saveLocalAdmin(false);
-              window.location.hash = "#/login";
-              window.location.reload();
-            }}
-          >
-            🚪 로그아웃
-          </button>
+          <>
+            <button className="btn btn-default" onClick={healthcheck}>🔌 연결 테스트</button>
+            <button
+              className="btn btn-default"
+              onClick={() => {
+                saveLocalAdmin(false);
+                window.location.hash = "#/login";
+                window.location.reload();
+              }}
+            >
+              🚪 로그아웃
+            </button>
+          </>
         )}
       </div>
 
@@ -623,7 +680,6 @@ function Home({ isAdmin, userId, userName }) {
               <details key={cat} ref={(el) => { if (el) categoryRefs.current[`전체-${cat}`] = el; }}>
                 <summary>📦 {cat}</summary>
                 {subs.map((sub) => {
-                  // 모든 위치 합산
                   const sumByName = {};
                   for (const L of locations) {
                     const items = inventory?.[L]?.[cat]?.[sub] || {};
@@ -716,7 +772,7 @@ function Home({ isAdmin, userId, userName }) {
                                     <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, it.id, +1)}>＋</button>
                                     <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, it.id, -1)}>－</button>
                                     <button className="btn btn-default btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, it.id, it.name)}>✎ 이름</button>
-                                    <button className="btn btn-default btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, it.id, it.note)}>📝 메모</button>
+                                    <button className="btn btn-default btn-compact" onClick={(e) => { e.stopPropagation(); handleEditItemNote(openPanel.loc, cat, sub, it.id, it.note); }}>📝 메모</button>
                                   </div>
                                 )}
                               </li>
@@ -783,7 +839,7 @@ function LogsPage() {
       await update(ref(db, `logs/${logId}`), { reason: note });
     } catch (e) {
       console.error(e);
-      toast.error("메모 저장 실패");
+      toast.error(`메모 저장 실패: ${e?.code || e?.message || "unknown error"}`);
     }
   }
 
@@ -793,7 +849,7 @@ function LogsPage() {
       await set(ref(db, `logs/${logId}`), null);
     } catch (e) {
       console.error(e);
-      toast.error("삭제 실패");
+      toast.error(`삭제 실패: ${e?.code || e?.message || "unknown error"}`);
     }
   }
 
