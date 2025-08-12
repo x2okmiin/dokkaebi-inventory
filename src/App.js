@@ -7,7 +7,7 @@ import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
 
 /* ==== Firebase (실시간 동기화) ==== */
-import { db, ref, set, onValue, runTransaction } from "./firebase";
+import { db, ref, set, onValue } from "./firebase";
 
 /* =======================
  * 상수 정의
@@ -30,7 +30,6 @@ const subcategories = {
 function getLocalInventory() {
   const d = localStorage.getItem("do-kkae-bi-inventory");
   if (d) return JSON.parse(d);
-  // 기본 구조 생성
   const base = {};
   locations.forEach((loc) => {
     base[loc] = {};
@@ -161,7 +160,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
   /* --- Firebase 실시간 구독 (읽기) --- */
   useEffect(() => {
-    // 읽기는 누구나 가능하게 두면, 비관리자도 최신 데이터 확인 가능
     const invRef = ref(db, "inventory/");
     const logRef = ref(db, "logs/");
 
@@ -238,56 +236,53 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     XLSX.writeFile(wb, "재고현황.xlsx");
   }
 
-  /* ====== 공통: 서브 경로 쓰기 헬퍼 ====== */
-  const setSubArrayToCloud = (loc, cat, sub, arr) =>
-    set(ref(db, `inventory/${loc}/${cat}/${sub}`), arr).catch(() => {});
+  /* ====== 클라우드 쓰기 헬퍼 ====== */
+  const setSubArrayToCloud = async (loc, cat, sub, arr) => {
+    try {
+      await set(ref(db, `inventory/${loc}/${cat}/${sub}`), arr);
+    } catch (e) {
+      console.error(e);
+      toast.error("클라우드 저장 실패 (재고)");
+    }
+  };
+  const setLogsToCloud = async (nextLogs) => {
+    try {
+      await set(ref(db, "logs/"), nextLogs);
+    } catch (e) {
+      console.error(e);
+      toast.error("클라우드 저장 실패 (기록)");
+    }
+  };
 
-  const setLogsToCloud = (nextLogs) =>
-    set(ref(db, "logs/"), nextLogs).catch(() => {});
-
-  /* ====== 수량 증감(1시간 병합) — 트랜잭션 적용 ====== */
-  async function handleUpdateItemCount(loc, cat, sub, idx, delta) {
+  /* ====== 수량 증감 — 서브경로 전체 저장 ====== */
+  function handleUpdateItemCount(loc, cat, sub, idx, delta) {
     if (!isAdmin || delta === 0) return;
     const itemName = inventory[loc]?.[cat]?.[sub]?.[idx]?.name;
     if (!itemName) return;
 
-    // 1) 로컬 즉시 반영(낙관적 업데이트)
-    setInventory((prev) => {
-      const inv = JSON.parse(JSON.stringify(prev));
-      const it = inv[loc][cat][sub][idx];
-      if (it) it.count = Math.max(0, (it.count || 0) + delta);
-      saveLocalInventory(inv);
-      return inv;
-    });
+    // 1) 로컬 즉시 반영
+    const nextInv = JSON.parse(JSON.stringify(inventory));
+    const it = nextInv[loc][cat][sub][idx];
+    it.count = Math.max(0, (it.count || 0) + delta);
+    setInventory(nextInv);
+    saveLocalInventory(nextInv);
 
-    // 2) 클라우드: 해당 count만 트랜잭션 증감 (경쟁 덮어쓰기 방지)
-    const countRef = ref(db, `inventory/${loc}/${cat}/${sub}/${idx}/count`);
-    try {
-      await runTransaction(countRef, (curr) => {
-        const next = Math.max(0, (curr || 0) + delta);
-        return next;
-      });
-    } catch (e) {
-      // 실패 시 롤백 대신 서버 값 수신(onValue)에 맡김
-    }
+    // 2) 클라우드 반영 (서브경로 전체)
+    setSubArrayToCloud(loc, cat, sub, nextInv[loc][cat][sub]);
 
-    // 3) 로그 병합 후 클라우드 반영
+    // 3) 로그 추가/병합 + 클라우드 반영
     const now = new Date();
     const ts = now.toISOString();
     const time = now.toLocaleString();
     const key = `${loc}|${cat}|${sub}|${itemName}|${delta > 0 ? "IN" : "OUT"}`;
+
     setLogs((prev) => {
       const arr = [...prev];
       const mergeIdx = arr.findIndex(
         (l) => l.key === key && now - new Date(l.ts) < 60 * 60 * 1000
       );
       if (mergeIdx > -1) {
-        arr[mergeIdx] = {
-          ...arr[mergeIdx],
-          change: arr[mergeIdx].change + delta,
-          time,
-          ts,
-        };
+        arr[mergeIdx] = { ...arr[mergeIdx], change: arr[mergeIdx].change + delta, time, ts };
       } else {
         arr.unshift({
           key,
@@ -302,51 +297,44 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         });
       }
       saveLocalLogs(arr);
-      if (isAdmin) setLogsToCloud(arr);
+      setLogsToCloud(arr);
       return arr;
     });
   }
 
-  /* ====== 품목 이름 수정 (서브경로 전체 덮어쓰기) ====== */
+  /* ====== 품목 이름 수정 ====== */
   function handleEditItemName(loc, cat, sub, idx) {
     if (!isAdmin) return;
     const oldName = inventory[loc][cat][sub][idx].name;
     const newName = prompt("새 품목명을 입력하세요:", oldName);
     if (!newName || newName === oldName) return;
 
-    setInventory((prev) => {
-      const inv = JSON.parse(JSON.stringify(prev));
-      // 동일 하위카테고리 내 모든 장소에 이름 일괄 반영
-      locations.forEach((L) => {
-        inv[L][cat][sub] = inv[L][cat][sub].map((item) =>
-          item.name === oldName ? { ...item, name: newName } : item
-        );
-      });
-      saveLocalInventory(inv);
-      // 클라우드에 위치별 서브배열만 반영
-      if (isAdmin) {
-        locations.forEach((L) => setSubArrayToCloud(L, cat, sub, inv[L][cat][sub]));
-      }
-      return inv;
+    const nextInv = JSON.parse(JSON.stringify(inventory));
+    locations.forEach((L) => {
+      nextInv[L][cat][sub] = nextInv[L][cat][sub].map((item) =>
+        item.name === oldName ? { ...item, name: newName } : item
+      );
     });
+    setInventory(nextInv);
+    saveLocalInventory(nextInv);
+    // 위치별 서브경로 저장
+    locations.forEach((L) => setSubArrayToCloud(L, cat, sub, nextInv[L][cat][sub]));
   }
 
-  /* ====== 품목 메모 (서브경로 저장) ====== */
+  /* ====== 품목 메모 ====== */
   function handleEditItemNote(loc, cat, sub, idx) {
     if (!isAdmin) return;
-    setInventory((prev) => {
-      const inv = JSON.parse(JSON.stringify(prev));
-      const it = inv[loc][cat][sub][idx];
-      const note = prompt("특이사항을 입력하세요:", it.note || "");
-      if (note === null) return prev;
-      it.note = note;
-      saveLocalInventory(inv);
-      if (isAdmin) setSubArrayToCloud(loc, cat, sub, inv[loc][cat][sub]);
-      return inv;
-    });
+    const nextInv = JSON.parse(JSON.stringify(inventory));
+    const it = nextInv[loc][cat][sub][idx];
+    const note = prompt("특이사항을 입력하세요:", it.note || "");
+    if (note === null) return;
+    it.note = note;
+    setInventory(nextInv);
+    saveLocalInventory(nextInv);
+    setSubArrayToCloud(loc, cat, sub, nextInv[loc][cat][sub]);
   }
 
-  /* ====== 신규 품목 추가 (서브경로 저장) ====== */
+  /* ====== 신규 품목 추가 ====== */
   function handleAddNewItem(loc) {
     if (!isAdmin) return;
     const cat = prompt("상위 카테고리 선택:\n" + Object.keys(subcategories).join(", "));
@@ -358,23 +346,19 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     const count = Number(prompt("초기 수량 입력:"));
     if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
 
-    setInventory((prev) => {
-      const inv = JSON.parse(JSON.stringify(prev));
-      locations.forEach((L) => {
-        if (!inv[L][cat]) inv[L][cat] = {};
-        if (!inv[L][cat][sub]) inv[L][cat][sub] = [];
-        inv[L][cat][sub].push({ name, count: L === loc ? count : 0, note: "" });
-      });
-      saveLocalInventory(inv);
-      if (isAdmin) {
-        // 위치별 해당 서브배열만 클라우드 반영
-        locations.forEach((L) => setSubArrayToCloud(L, cat, sub, inv[L][cat][sub]));
-      }
-      return inv;
+    const nextInv = JSON.parse(JSON.stringify(inventory));
+    locations.forEach((L) => {
+      if (!nextInv[L][cat]) nextInv[L][cat] = {};
+      if (!nextInv[L][cat][sub]) nextInv[L][cat][sub] = [];
+      nextInv[L][cat][sub].push({ name, count: L === loc ? count : 0, note: "" });
     });
+    setInventory(nextInv);
+    saveLocalInventory(nextInv);
+    // 위치별 서브경로 저장
+    locations.forEach((L) => setSubArrayToCloud(L, cat, sub, nextInv[L][cat][sub]));
   }
 
-  /* ====== 품목 전체 삭제(이름으로) — 여러 서브경로 저장 ====== */
+  /* ====== 품목 전체 삭제(이름으로) ====== */
   function handleDeleteItem() {
     if (!isAdmin) return;
     const name = prompt("삭제할 품목 이름을 입력하세요:");
@@ -392,48 +376,41 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     });
     if (totalCount === 0) return toast.error("해당 품목이 존재하지 않습니다.");
 
-    setInventory((prev) => {
-      const newInv = JSON.parse(JSON.stringify(prev));
-      const touched = [];
-      locations.forEach((L) => {
-        Object.keys(newInv[L]).forEach((cat) => {
-          Object.keys(newInv[L][cat]).forEach((sub) => {
-            const before = newInv[L][cat][sub] || [];
-            const after = before.filter((item) => item.name !== name);
-            if (after.length !== before.length) {
-              newInv[L][cat][sub] = after;
-              touched.push([L, cat, sub, after]);
-            }
-          });
+    const nextInv = JSON.parse(JSON.stringify(inventory));
+    const touched = [];
+    locations.forEach((L) => {
+      Object.keys(nextInv[L]).forEach((cat) => {
+        Object.keys(nextInv[L][cat]).forEach((sub) => {
+          const before = nextInv[L][cat][sub] || [];
+          const after = before.filter((item) => item.name !== name);
+          if (after.length !== before.length) {
+            nextInv[L][cat][sub] = after;
+            touched.push([L, cat, sub, after]);
+          }
         });
       });
-      saveLocalInventory(newInv);
-      if (isAdmin) touched.forEach(([L, cat, sub, arr]) => setSubArrayToCloud(L, cat, sub, arr));
-      return newInv;
     });
+    setInventory(nextInv);
+    saveLocalInventory(nextInv);
+    touched.forEach(([L, cat, sub, arr]) => setSubArrayToCloud(L, cat, sub, arr));
 
-    const now = new Date(),
-      ts = now.toISOString(),
-      time = now.toLocaleString();
-    setLogs((prev) => {
-      const next = [
-        {
-          key: `전체||${name}|OUT`,
-          location: "전체",
-          category: "삭제",
-          subcategory: "",
-          item: name,
-          change: -totalCount,
-          reason: "해당 품목은 총괄 삭제됨",
-          time,
-          ts,
-        },
-        ...prev,
-      ];
-      saveLocalLogs(next);
-      if (isAdmin) setLogsToCloud(next);
-      return next;
-    });
+    const now = new Date(), ts = now.toISOString(), time = now.toLocaleString();
+    const nextLogs = [
+      {
+        key: `전체||${name}|OUT`,
+        location: "전체",
+        category: "삭제",
+        subcategory: "",
+        item: name,
+        change: -totalCount,
+        reason: "해당 품목은 총괄 삭제됨",
+        time, ts,
+      },
+      ...logs,
+    ];
+    setLogs(nextLogs);
+    saveLocalLogs(nextLogs);
+    setLogsToCloud(nextLogs);
   }
 
   /* ====== 검색 / 결과 집계 ====== */
@@ -462,7 +439,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     return Object.values(map);
   }, [filtered]);
 
-  /* ====== 검색 결과 클릭 → 해당 위치로 펼치고 스크롤 ====== */
+  /* ====== 검색 결과 클릭 → 해당 위치로 ====== */
   function scrollToCategory(loc, cat, sub, itemName) {
     Object.keys(categoryRefs.current).forEach((k) => {
       if (k.startsWith(`${loc}-`)) {
@@ -541,7 +518,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                 📤 재고 Excel 내보내기
               </button>
 
-              {/* 베타: 가져오기 비활성화 + 밑줄 안내 */}
+              {/* 베타: 가져오기 비활성화 */}
               <button
                 className="menu-item"
                 disabled
@@ -554,7 +531,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           )}
         </div>
 
-        {/* 🚪 로그아웃 (관리자일 때만 노출) */}
+        {/* 🚪 로그아웃 (관리자만 노출) */}
         {isAdmin && (
           <button
             className="btn btn-default"
@@ -816,7 +793,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 }
 
 /* =======================
- * LogsPage — ID/이름 필드는 비활성, 배열 기반 내보내기/편집
+ * LogsPage
  * ======================= */
 function LogsPage({ logs, setLogs }) {
   const navigate = useNavigate();
@@ -852,14 +829,14 @@ function LogsPage({ logs, setLogs }) {
     const arr = [...logs];
     arr[i].reason = note;
     setLogs(arr);
-    set(ref(db, "logs/"), arr).catch(() => {});
+    set(ref(db, "logs/"), arr).catch(() => toast.error("클라우드 저장 실패 (기록)"));
   }
 
   function deleteLog(i) {
     if (window.confirm("삭제하시겠습니까?")) {
       const next = logs.filter((_, j) => j !== i);
       setLogs(next);
-      set(ref(db, "logs/"), next).catch(() => {});
+      set(ref(db, "logs/"), next).catch(() => toast.error("클라우드 저장 실패 (기록)"));
     }
   }
 
@@ -992,7 +969,7 @@ export default function AppWrapper() {
   const [logs, setLogs] = useState(getLocalLogs);
   const isAdmin = getLocalAdmin();
 
-  // 로그인 라우트용 래퍼: 로그인 배경을 white.png로 + 차콜 오버레이
+  // 로그인 라우트용 래퍼
   const LoginShell = ({ children }) => (
     <div style={{ position: "relative", minHeight: "100vh" }}>
       <FixedBg
@@ -1008,7 +985,7 @@ export default function AppWrapper() {
         style={{
           position: "absolute",
           inset: 0,
-          background: "rgba(15, 23, 42, 0.6)", // 차콜 오버레이
+          background: "rgba(15, 23, 42, 0.6)",
           zIndex: -1
         }}
       />
@@ -1018,17 +995,10 @@ export default function AppWrapper() {
 
   return (
     <>
-      {/* 토스트 */}
       <Toaster
         position="bottom-right"
         toastOptions={{
-          style: {
-            background: "#232943",
-            color: "#fff",
-            fontWeight: 600,
-            borderRadius: "1rem",
-            fontSize: "1.08rem",
-          },
+          style: { background: "#232943", color: "#fff", fontWeight: 600, borderRadius: "1rem", fontSize: "1.08rem" },
           success: { style: { background: "#181a20", color: "#2dd4bf" } },
           error: { style: { background: "#181a20", color: "#ee3a60" } },
         }}
@@ -1036,7 +1006,6 @@ export default function AppWrapper() {
 
       <Router>
         <Routes>
-          {/* 무조건 로그인 먼저: 미인증이면 어떤 경로로 와도 /login */}
           {!isAdmin ? (
             <>
               <Route
@@ -1047,8 +1016,8 @@ export default function AppWrapper() {
                       onLogin={(pw) => {
                         if (pw === "2500") {
                           saveLocalAdmin(true);
-                          window.location.hash = "#/"; // HashRouter 강제 이동
-                          window.location.reload();     // 상태 클린
+                          window.location.hash = "#/";
+                          window.location.reload();
                         } else {
                           toast.error("비밀번호가 틀렸습니다.");
                         }
@@ -1061,7 +1030,6 @@ export default function AppWrapper() {
             </>
           ) : (
             <>
-              {/* 이미 관리자면 /login 접근 시 홈으로 리다이렉트 */}
               <Route path="/login" element={<Navigate to="/" replace />} />
               <Route
                 path="/"

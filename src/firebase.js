@@ -1,7 +1,6 @@
 // src/firebase.js
 // Firebase Realtime Database 연결 헬퍼
-// 👉 아래 config 값은 Firebase 콘솔에서 복사해서 넣어줘.
-//    (Project settings > Your apps > Firebase SDK snippet > Config)
+// ⚠️ 반드시 콘솔의 실제 config로 교체하세요.
 
 import { initializeApp } from "firebase/app";
 import {
@@ -10,7 +9,6 @@ import {
   set as _set,
   onValue as _onValue,
   update as _update,
-  runTransaction as _runTransaction,
 } from "firebase/database";
 
 const firebaseConfig = {
@@ -31,4 +29,3 @@ export const ref = _ref;
 export const set = _set;
 export const onValue = _onValue;
 export const update = _update;
-export const runTransaction = _runTransaction;
