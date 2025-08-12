@@ -1,14 +1,15 @@
 // src/firebase.js
-// Firebase Realtime Database 연결 헬퍼
-// ⚠️ 반드시 콘솔의 실제 config로 교체하세요.
+// Firebase Realtime Database 연결 헬퍼 (실제 콘솔 값으로 교체하세요)
 
 import { initializeApp } from "firebase/app";
 import {
   getDatabase,
   ref as _ref,
   set as _set,
-  onValue as _onValue,
   update as _update,
+  onValue as _onValue,
+  push as _push,
+  runTransaction as _runTransaction,
 } from "firebase/database";
 
 const firebaseConfig = {
@@ -27,5 +28,7 @@ const db = getDatabase(app);
 export { db };
 export const ref = _ref;
 export const set = _set;
-export const onValue = _onValue;
 export const update = _update;
+export const onValue = _onValue;
+export const push = _push;
+export const runTransaction = _runTransaction;

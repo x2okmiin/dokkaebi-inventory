@@ -7,7 +7,7 @@ import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
 
 /* ==== Firebase (실시간 동기화) ==== */
-import { db, ref, set, onValue } from "./firebase";
+import { db, ref, set, update, onValue, push, runTransaction } from "./firebase";
 
 /* =======================
  * 상수 정의
@@ -27,37 +27,30 @@ const subcategories = {
 /* =======================
  * localStorage helpers
  * ======================= */
-function getLocalInventory() {
-  const d = localStorage.getItem("do-kkae-bi-inventory");
-  if (d) return JSON.parse(d);
-  const base = {};
-  locations.forEach((loc) => {
-    base[loc] = {};
-    Object.keys(subcategories).forEach((cat) => {
-      base[loc][cat] = {};
-      subcategories[cat].forEach((sub) => {
-        base[loc][cat][sub] = [];
-      });
-    });
-  });
-  return base;
-}
-function saveLocalInventory(data) {
-  localStorage.setItem("do-kkae-bi-inventory", JSON.stringify(data));
-}
-function getLocalLogs() {
-  const d = localStorage.getItem("do-kkae-bi-logs");
-  return d ? JSON.parse(d) : [];
-}
-function saveLocalLogs(data) {
-  localStorage.setItem("do-kkae-bi-logs", JSON.stringify(data));
-}
 function getLocalAdmin() {
   return localStorage.getItem("do-kkae-bi-admin") === "true";
 }
 function saveLocalAdmin(val) {
   localStorage.setItem("do-kkae-bi-admin", val ? "true" : "false");
 }
+function getLocalUserId() {
+  return localStorage.getItem("do-kkae-bi-user-id") || "";
+}
+function getLocalUserName() {
+  return localStorage.getItem("do-kkae-bi-user-name") || "";
+}
+
+/* =======================
+ * 유틸
+ * ======================= */
+// 객체 → 배열 변환(helper) : {id:{...}, ...} → [{id, ...}, ...]
+const entriesToList = (obj) =>
+  Object.entries(obj || {}).map(([id, v]) => ({ id, ...(v || {}) }));
+
+const nowMeta = () => {
+  const d = new Date();
+  return { ts: d.toISOString(), time: d.toLocaleString() };
+};
 
 /* =======================
  * 고정 배경
@@ -116,30 +109,31 @@ function FixedBg({
 }
 
 /* =======================
- * Home
+ * Home (실시간 동기화)
  * ======================= */
-function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLogs, isAdmin }) {
+function Home({ isAdmin, userId, userName }) {
   const navigate = useNavigate();
+
+  // inventory 구조: inventory[loc][cat][sub] = { itemId: {name, count, note}, ... }
+  const [inventory, setInventory] = useState({});
+  // logs: { logId: {...}, ... } → 배열로 가공하여 사용
+  const [logsMap, setLogsMap] = useState({});
+
+  const [searchTerm, setSearchTerm] = useState("");
   const categoryRefs = useRef({});
   const cardRefs = useRef({});
   const [syncing, setSyncing] = useState(false);
 
-  // 데이터 메뉴 (Export/Import)
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const dataMenuRef = useRef(null);
-
-  // 팝업(확대 보기) 상태
   const [openPanel, setOpenPanel] = useState(null);
-
-  // 🔒 클라우드 → 로컬 적용 중인지(무한 루프 방지)
-  const applyingCloudRef = useRef({ inv: false, logs: false });
 
   /* --- (가시적인) 동기화 인디케이터 --- */
   useEffect(() => {
     setSyncing(true);
-    const t = setTimeout(() => setSyncing(false), 700);
+    const t = setTimeout(() => setSyncing(false), 600);
     return () => clearTimeout(t);
-  }, [inventory, logs]);
+  }, [inventory, logsMap]);
 
   /* --- 외부 클릭으로 데이터 메뉴 닫기 --- */
   useEffect(() => {
@@ -158,56 +152,47 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     };
   }, [dataMenuOpen]);
 
-  /* --- Firebase 실시간 구독 (읽기) --- */
+  /* --- Firebase 구독 (inventory / logs) --- */
   useEffect(() => {
-    const invRef = ref(db, "inventory/");
-    const logRef = ref(db, "logs/");
+    const invRef = ref(db, "inventory");
+    const logRef = ref(db, "logs");
 
     const unsubInv = onValue(invRef, (snap) => {
-      if (!snap.exists()) return;
-      const cloud = snap.val();
-      if (JSON.stringify(cloud) !== JSON.stringify(inventory)) {
-        applyingCloudRef.current.inv = true;
-        setInventory(cloud);
-        saveLocalInventory(cloud);
-      }
+      const v = snap.val() || {};
+      setInventory(v);
     });
 
     const unsubLogs = onValue(logRef, (snap) => {
-      if (!snap.exists()) return;
-      const cloud = snap.val();
-      if (JSON.stringify(cloud) !== JSON.stringify(logs)) {
-        applyingCloudRef.current.logs = true;
-        setLogs(cloud);
-        saveLocalLogs(cloud);
-      }
+      const v = snap.val() || {};
+      setLogsMap(v);
     });
 
     return () => {
       unsubInv();
       unsubLogs();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // 초기에만 구독
+  }, []);
 
-  /* ====== 재고 엑셀 내보내기 ====== */
+  /* ====== 엑셀 내보내기 ====== */
   function exportInventoryExcel() {
     const rows = [];
     const itemTotals = {};
     locations.forEach((loc) => {
       Object.entries(subcategories).forEach(([cat, subs]) => {
         subs.forEach((sub) => {
-          (inventory[loc]?.[cat]?.[sub] || []).forEach((item) => {
+          const itemsObj = inventory?.[loc]?.[cat]?.[sub] || {};
+          Object.values(itemsObj).forEach((item) => {
+            const count = Number(item.count || 0);
             rows.push({
               장소: loc,
               상위카테고리: cat,
               하위카테고리: sub,
               품목명: item.name,
-              수량: item.count,
+              수량: count,
             });
             if (!itemTotals[item.name]) itemTotals[item.name] = { 합계: 0, 장소별: {} };
-            itemTotals[item.name].합계 += item.count;
-            itemTotals[item.name].장소별[loc] = (itemTotals[item.name].장소별[loc] || 0) + item.count;
+            itemTotals[item.name].합계 += count;
+            itemTotals[item.name].장소별[loc] = (itemTotals[item.name].장소별[loc] || 0) + count;
           });
         });
       });
@@ -236,106 +221,68 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     XLSX.writeFile(wb, "재고현황.xlsx");
   }
 
-  /* ====== 클라우드 쓰기 헬퍼 ====== */
-  const setSubArrayToCloud = async (loc, cat, sub, arr) => {
+  /* ====== 경로 헬퍼 ====== */
+  const itemPath = (loc, cat, sub, itemId) => `inventory/${loc}/${cat}/${sub}/${itemId}`;
+
+  /* ====== 수량 증감 (트랜잭션) ====== */
+  async function handleUpdateItemCount(loc, cat, sub, itemId, delta) {
+    if (!isAdmin || !itemId || !delta) return;
     try {
-      await set(ref(db, `inventory/${loc}/${cat}/${sub}`), arr);
+      // 트랜잭션: count만 동시성 안전하게 변경
+      await runTransaction(ref(db, `${itemPath(loc, cat, sub, itemId)}/count`), (cur) => {
+        const next = Math.max(0, Number(cur || 0) + delta);
+        return next;
+      });
+
+      // 로그 push
+      const { ts, time } = nowMeta();
+      await push(ref(db, "logs"), {
+        ts,
+        time,
+        location: loc,
+        category: cat,
+        subcategory: sub,
+        itemId,
+        itemName: inventory?.[loc]?.[cat]?.[sub]?.[itemId]?.name || "",
+        change: delta,
+        reason: "입출고",
+        operatorId: userId || "",
+        operatorName: userName || "",
+      });
     } catch (e) {
       console.error(e);
-      toast.error("클라우드 저장 실패 (재고)");
+      toast.error("수량 변경 실패");
     }
-  };
-  const setLogsToCloud = async (nextLogs) => {
-    try {
-      await set(ref(db, "logs/"), nextLogs);
-    } catch (e) {
-      console.error(e);
-      toast.error("클라우드 저장 실패 (기록)");
-    }
-  };
-
-  /* ====== 수량 증감 — 서브경로 전체 저장 ====== */
-  function handleUpdateItemCount(loc, cat, sub, idx, delta) {
-    if (!isAdmin || delta === 0) return;
-    const itemName = inventory[loc]?.[cat]?.[sub]?.[idx]?.name;
-    if (!itemName) return;
-
-    // 1) 로컬 즉시 반영
-    const nextInv = JSON.parse(JSON.stringify(inventory));
-    const it = nextInv[loc][cat][sub][idx];
-    it.count = Math.max(0, (it.count || 0) + delta);
-    setInventory(nextInv);
-    saveLocalInventory(nextInv);
-
-    // 2) 클라우드 반영 (서브경로 전체)
-    setSubArrayToCloud(loc, cat, sub, nextInv[loc][cat][sub]);
-
-    // 3) 로그 추가/병합 + 클라우드 반영
-    const now = new Date();
-    const ts = now.toISOString();
-    const time = now.toLocaleString();
-    const key = `${loc}|${cat}|${sub}|${itemName}|${delta > 0 ? "IN" : "OUT"}`;
-
-    setLogs((prev) => {
-      const arr = [...prev];
-      const mergeIdx = arr.findIndex(
-        (l) => l.key === key && now - new Date(l.ts) < 60 * 60 * 1000
-      );
-      if (mergeIdx > -1) {
-        arr[mergeIdx] = { ...arr[mergeIdx], change: arr[mergeIdx].change + delta, time, ts };
-      } else {
-        arr.unshift({
-          key,
-          location: loc,
-          category: cat,
-          subcategory: sub,
-          item: itemName,
-          change: delta,
-          reason: "입출고",
-          time,
-          ts,
-        });
-      }
-      saveLocalLogs(arr);
-      setLogsToCloud(arr);
-      return arr;
-    });
   }
 
   /* ====== 품목 이름 수정 ====== */
-  function handleEditItemName(loc, cat, sub, idx) {
-    if (!isAdmin) return;
-    const oldName = inventory[loc][cat][sub][idx].name;
-    const newName = prompt("새 품목명을 입력하세요:", oldName);
+  async function handleEditItemName(loc, cat, sub, itemId, oldName) {
+    if (!isAdmin || !itemId) return;
+    const newName = prompt("새 품목명을 입력하세요:", oldName || "");
     if (!newName || newName === oldName) return;
-
-    const nextInv = JSON.parse(JSON.stringify(inventory));
-    locations.forEach((L) => {
-      nextInv[L][cat][sub] = nextInv[L][cat][sub].map((item) =>
-        item.name === oldName ? { ...item, name: newName } : item
-      );
-    });
-    setInventory(nextInv);
-    saveLocalInventory(nextInv);
-    // 위치별 서브경로 저장
-    locations.forEach((L) => setSubArrayToCloud(L, cat, sub, nextInv[L][cat][sub]));
+    try {
+      await update(ref(db, itemPath(loc, cat, sub, itemId)), { name: newName });
+    } catch (e) {
+      console.error(e);
+      toast.error("이름 수정 실패");
+    }
   }
 
   /* ====== 품목 메모 ====== */
-  function handleEditItemNote(loc, cat, sub, idx) {
-    if (!isAdmin) return;
-    const nextInv = JSON.parse(JSON.stringify(inventory));
-    const it = nextInv[loc][cat][sub][idx];
-    const note = prompt("특이사항을 입력하세요:", it.note || "");
+  async function handleEditItemNote(loc, cat, sub, itemId, currentNote) {
+    if (!isAdmin || !itemId) return;
+    const note = prompt("특이사항을 입력하세요:", currentNote || "");
     if (note === null) return;
-    it.note = note;
-    setInventory(nextInv);
-    saveLocalInventory(nextInv);
-    setSubArrayToCloud(loc, cat, sub, nextInv[loc][cat][sub]);
+    try {
+      await update(ref(db, itemPath(loc, cat, sub, itemId)), { note });
+    } catch (e) {
+      console.error(e);
+      toast.error("메모 저장 실패");
+    }
   }
 
-  /* ====== 신규 품목 추가 ====== */
-  function handleAddNewItem(loc) {
+  /* ====== 신규 품목 추가 (각 위치별로 생성) ====== */
+  async function handleAddNewItem(loc) {
     if (!isAdmin) return;
     const cat = prompt("상위 카테고리 선택:\n" + Object.keys(subcategories).join(", "));
     if (!cat || !subcategories[cat]) return toast.error("올바른 카테고리가 아닙니다.");
@@ -346,87 +293,90 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     const count = Number(prompt("초기 수량 입력:"));
     if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
 
-    const nextInv = JSON.parse(JSON.stringify(inventory));
-    locations.forEach((L) => {
-      if (!nextInv[L][cat]) nextInv[L][cat] = {};
-      if (!nextInv[L][cat][sub]) nextInv[L][cat][sub] = [];
-      nextInv[L][cat][sub].push({ name, count: L === loc ? count : 0, note: "" });
-    });
-    setInventory(nextInv);
-    saveLocalInventory(nextInv);
-    // 위치별 서브경로 저장
-    locations.forEach((L) => setSubArrayToCloud(L, cat, sub, nextInv[L][cat][sub]));
+    try {
+      // 모든 위치에 동일 품목 key 생성(이 위치는 count=입력값, 타 위치는 0)
+      for (const L of locations) {
+        const newRef = push(ref(db, `inventory/${L}/${cat}/${sub}`));
+        await set(newRef, {
+          name,
+          count: L === loc ? count : 0,
+          note: "",
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("품목 추가 실패");
+    }
   }
 
   /* ====== 품목 전체 삭제(이름으로) ====== */
-  function handleDeleteItem() {
+  async function handleDeleteItemByName() {
     if (!isAdmin) return;
     const name = prompt("삭제할 품목 이름을 입력하세요:");
     if (!name) return;
 
-    let totalCount = 0;
-    locations.forEach((L) => {
-      Object.keys(inventory[L]).forEach((cat) => {
-        Object.keys(inventory[L][cat]).forEach((sub) => {
-          (inventory[L][cat][sub] || []).forEach((item) => {
-            if (item.name === name) totalCount += item.count;
-          });
-        });
-      });
-    });
-    if (totalCount === 0) return toast.error("해당 품목이 존재하지 않습니다.");
-
-    const nextInv = JSON.parse(JSON.stringify(inventory));
-    const touched = [];
-    locations.forEach((L) => {
-      Object.keys(nextInv[L]).forEach((cat) => {
-        Object.keys(nextInv[L][cat]).forEach((sub) => {
-          const before = nextInv[L][cat][sub] || [];
-          const after = before.filter((item) => item.name !== name);
-          if (after.length !== before.length) {
-            nextInv[L][cat][sub] = after;
-            touched.push([L, cat, sub, after]);
+    try {
+      let total = 0;
+      // 서버 상태 기준으로 스캔 후 해당 name 모두 삭제
+      const inv = inventory || {};
+      const touched = [];
+      for (const L of locations) {
+        const cats = inv[L] || {};
+        for (const [cat, subs] of Object.entries(cats)) {
+          for (const [sub, itemsObj] of Object.entries(subs || {})) {
+            for (const [id, it] of Object.entries(itemsObj || {})) {
+              if ((it?.name || "") === name) {
+                total += Number(it?.count || 0);
+                touched.push({ L, cat, sub, id });
+              }
+            }
           }
-        });
-      });
-    });
-    setInventory(nextInv);
-    saveLocalInventory(nextInv);
-    touched.forEach(([L, cat, sub, arr]) => setSubArrayToCloud(L, cat, sub, arr));
+        }
+      }
+      if (touched.length === 0) return toast.error("해당 품목이 존재하지 않습니다.");
 
-    const now = new Date(), ts = now.toISOString(), time = now.toLocaleString();
-    const nextLogs = [
-      {
-        key: `전체||${name}|OUT`,
+      const updates = {};
+      touched.forEach(({ L, cat, sub, id }) => {
+        updates[`${itemPath(L, cat, sub, id)}`] = null; // 삭제
+      });
+      await update(ref(db), updates);
+
+      const { ts, time } = nowMeta();
+      await push(ref(db, "logs"), {
+        ts, time,
         location: "전체",
         category: "삭제",
         subcategory: "",
-        item: name,
-        change: -totalCount,
+        itemId: "",
+        itemName: name,
+        change: -total,
         reason: "해당 품목은 총괄 삭제됨",
-        time, ts,
-      },
-      ...logs,
-    ];
-    setLogs(nextLogs);
-    saveLocalLogs(nextLogs);
-    setLogsToCloud(nextLogs);
+        operatorId: userId || "",
+        operatorName: userName || "",
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error("삭제 실패");
+    }
   }
 
-  /* ====== 검색 / 결과 집계 ====== */
-  const filtered = useMemo(
-    () =>
-      Object.entries(inventory).flatMap(([loc, cats]) =>
-        Object.entries(cats).flatMap(([cat, subs]) =>
-          Object.entries(subs).flatMap(([sub, items]) =>
-            (items || [])
-              .filter((i) => i.name.toLowerCase().includes(searchTerm.toLowerCase()))
-              .map((i) => ({ loc, cat, sub, ...i }))
-          )
-        )
-      ),
-    [inventory, searchTerm]
-  );
+  /* ====== 검색 / 집계 ====== */
+  const filtered = useMemo(() => {
+    const res = [];
+    for (const L of locations) {
+      for (const [cat, subs] of Object.entries(inventory?.[L] || {})) {
+        for (const [sub, itemsObj] of Object.entries(subs || {})) {
+          for (const [id, it] of Object.entries(itemsObj || {})) {
+            if (!it?.name) continue;
+            if (it.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+              res.push({ loc: L, cat, sub, id, name: it.name, count: Number(it.count || 0), note: it.note || "" });
+            }
+          }
+        }
+      }
+    }
+    return res;
+  }, [inventory, searchTerm]);
 
   const aggregated = useMemo(() => {
     const map = {};
@@ -439,7 +389,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
     return Object.values(map);
   }, [filtered]);
 
-  /* ====== 검색 결과 클릭 → 해당 위치로 ====== */
+  /* ====== 검색 → 위치로 스크롤 ====== */
   function scrollToCategory(loc, cat, sub, itemName) {
     Object.keys(categoryRefs.current).forEach((k) => {
       if (k.startsWith(`${loc}-`)) {
@@ -496,7 +446,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           📘 기록
         </button>
 
-        {/* 📦 데이터 드롭다운 (내보내기/가져오기) */}
         <div className="data-menu-wrap" ref={dataMenuRef}>
           <button
             className="btn btn-default"
@@ -517,8 +466,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
               >
                 📤 재고 Excel 내보내기
               </button>
-
-              {/* 베타: 가져오기 비활성화 */}
               <button
                 className="menu-item"
                 disabled
@@ -531,7 +478,6 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
           )}
         </div>
 
-        {/* 🚪 로그아웃 (관리자만 노출) */}
         {isAdmin && (
           <button
             className="btn btn-default"
@@ -597,14 +543,10 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         </div>
       )}
 
-      {/* 장소 카드들 */}
+      {/* 장소 카드 */}
       <div className="cards-grid">
         {locations.map((loc) => (
-          <div
-            key={loc}
-            className="card fixed"
-            ref={(el) => { if (el) cardRefs.current[loc] = el; }}
-          >
+          <div key={loc} className="card fixed" ref={(el) => { if (el) cardRefs.current[loc] = el; }}>
             <div
               className="card-head"
               onClick={() => setOpenPanel({ kind: "loc", loc })}
@@ -612,10 +554,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
             >
               <h2>{loc}</h2>
               {isAdmin && (
-                <button
-                  className="btn btn-default"
-                  onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}
-                >
+                <button className="btn btn-default" onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}>
                   +추가
                 </button>
               )}
@@ -625,38 +564,41 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
               {Object.entries(subcategories).map(([cat, subs]) => (
                 <details key={cat} ref={(el) => { if (el) categoryRefs.current[`${loc}-${cat}`] = el; }}>
                   <summary>📦 {cat}</summary>
-                  {subs.map((sub) => (
-                    <details key={sub} ref={(el) => { if (el) categoryRefs.current[`${loc}-${cat}-${sub}`] = el; }} style={{ marginLeft: 8 }}>
-                      <summary>▸ {sub}</summary>
-                      <ul className="item-list">
-                        {(inventory[loc]?.[cat]?.[sub] || []).map((it, idx) => (
-                          <li
-                            key={idx}
-                            className="item-row"
-                            ref={(el) => {
-                              const refKey = `${loc}-${cat}-${sub}-${it.name}`;
-                              if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
-                            }}
-                          >
-                            <div className="item-text">
-                              <span className="item-name">
-                                {it.name} <span className="item-count">({it.count}개)</span>
-                              </span>
-                              {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                            </div>
-                            {isAdmin && (
-                              <div className="item-actions">
-                                <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋</button>
-                                <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－</button>
-                                <button className="btn btn-default btn-compact" onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
-                                <button className="btn btn-default btn-compact" onClick={(e) => { e.stopPropagation(); handleEditItemNote(loc, cat, sub, idx); }}>📝 메모</button>
+                  {subs.map((sub) => {
+                    const items = entriesToList(inventory?.[loc]?.[cat]?.[sub]);
+                    return (
+                      <details key={sub} ref={(el) => { if (el) categoryRefs.current[`${loc}-${cat}-${sub}`] = el; }} style={{ marginLeft: 8 }}>
+                        <summary>▸ {sub}</summary>
+                        <ul className="item-list">
+                          {items.map((it) => (
+                            <li
+                              key={it.id}
+                              className="item-row"
+                              ref={(el) => {
+                                const refKey = `${loc}-${cat}-${sub}-${it.name}`;
+                                if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
+                              }}
+                            >
+                              <div className="item-text">
+                                <span className="item-name">
+                                  {it.name} <span className="item-count">({Number(it.count || 0)}개)</span>
+                                </span>
+                                {it.note && <div className="item-note">특이사항: {it.note}</div>}
                               </div>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  ))}
+                              {isAdmin && (
+                                <div className="item-actions">
+                                  <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, it.id, +1)}>＋</button>
+                                  <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, it.id, -1)}>－</button>
+                                  <button className="btn btn-default btn-compact" onClick={() => handleEditItemName(loc, cat, sub, it.id, it.name)}>✎ 이름</button>
+                                  <button className="btn btn-default btn-compact" onClick={(e) => { e.stopPropagation(); handleEditItemNote(loc, cat, sub, it.id, it.note); }}>📝 메모</button>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    );
+                  })}
                 </details>
               ))}
             </div>
@@ -666,21 +608,11 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 
       {/* 전체 요약 */}
       <section className="summary-bottom">
-        <div
-          className="card summary-card"
-          ref={(el) => { if (el) cardRefs.current["summary"] = el; }}
-        >
-          <div
-            className="card-head"
-            onClick={() => setOpenPanel({ kind: "summary" })}
-            style={{ cursor: "zoom-in" }}
-          >
+        <div className="card summary-card" ref={(el) => { if (el) cardRefs.current["summary"] = el; }}>
+          <div className="card-head" onClick={() => setOpenPanel({ kind: "summary" })} style={{ cursor: "zoom-in" }}>
             <h2>전체</h2>
             {isAdmin && (
-              <button
-                className="btn btn-destructive"
-                onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}
-              >
+              <button className="btn btn-destructive" onClick={(e) => { e.stopPropagation(); handleDeleteItemByName(); }}>
                 삭제
               </button>
             )}
@@ -690,25 +622,31 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
             {Object.entries(subcategories).map(([cat, subs]) => (
               <details key={cat} ref={(el) => { if (el) categoryRefs.current[`전체-${cat}`] = el; }}>
                 <summary>📦 {cat}</summary>
-                {subs.map((sub) => (
-                  <details key={sub} ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}`] = el; }} style={{ marginLeft: 8 }}>
-                    <summary>▸ {sub}</summary>
-                    <ul className="item-list">
-                      {Object.entries(
-                        locations.reduce((acc, L) => {
-                          (inventory[L]?.[cat]?.[sub] || []).forEach((it) => { acc[it.name] = (acc[it.name] || 0) + (it.count || 0); });
-                          return acc;
-                        }, {})
-                      ).map(([name, count]) => (
-                        <li key={name} className="item-row">
-                          <div className="item-text">
-                            <span className="item-name">{name} <span className="item-count">({count}개)</span></span>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ))}
+                {subs.map((sub) => {
+                  // 모든 위치 합산
+                  const sumByName = {};
+                  for (const L of locations) {
+                    const items = inventory?.[L]?.[cat]?.[sub] || {};
+                    Object.values(items).forEach((it) => {
+                      if (!it?.name) return;
+                      sumByName[it.name] = (sumByName[it.name] || 0) + Number(it.count || 0);
+                    });
+                  }
+                  return (
+                    <details key={sub} ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}`] = el; }} style={{ marginLeft: 8 }}>
+                      <summary>▸ {sub}</summary>
+                      <ul className="item-list">
+                        {Object.entries(sumByName).map(([name, count]) => (
+                          <li key={name} className="item-row">
+                            <div className="item-text">
+                              <span className="item-name">{name} <span className="item-count">({count}개)</span></span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  );
+                })}
               </details>
             ))}
           </div>
@@ -720,9 +658,7 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
         <div className="overlay" onClick={() => setOpenPanel(null)}>
           <div className="popup-card pop-in" onClick={(e) => e.stopPropagation()}>
             <div className="popup-head">
-              <h3>
-                {openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}
-              </h3>
+              <h3>{openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}</h3>
               <button className="btn btn-outline" onClick={() => setOpenPanel(null)}>닫기</button>
             </div>
 
@@ -731,56 +667,64 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
                 Object.entries(subcategories).map(([cat, subs]) => (
                   <details key={cat} open>
                     <summary>📦 {cat}</summary>
-                    {subs.map((sub) => (
-                      <details key={sub} open style={{ marginLeft: 8 }}>
-                        <summary>▸ {sub}</summary>
-                        <ul className="item-list">
-                          {Object.entries(
-                            locations.reduce((acc, L) => {
-                              (inventory[L]?.[cat]?.[sub] || []).forEach((it) => { acc[it.name] = (acc[it.name] || 0) + (it.count || 0); });
-                              return acc;
-                            }, {})
-                          ).map(([name, count]) => (
-                            <li key={name} className="item-row">
-                              <div className="item-text">
-                                <span className="item-name">{name} <span className="item-count">({count}개)</span></span>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    ))}
+                    {subs.map((sub) => {
+                      const sumByName = {};
+                      for (const L of locations) {
+                        const items = inventory?.[L]?.[cat]?.[sub] || {};
+                        Object.values(items).forEach((it) => {
+                          if (!it?.name) return;
+                          sumByName[it.name] = (sumByName[it.name] || 0) + Number(it.count || 0);
+                        });
+                      }
+                      return (
+                        <details key={sub} open style={{ marginLeft: 8 }}>
+                          <summary>▸ {sub}</summary>
+                          <ul className="item-list">
+                            {Object.entries(sumByName).map(([name, count]) => (
+                              <li key={name} className="item-row">
+                                <div className="item-text">
+                                  <span className="item-name">{name} <span className="item-count">({count}개)</span></span>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      );
+                    })}
                   </details>
                 ))
               ) : (
                 Object.entries(subcategories).map(([cat, subs]) => (
                   <details key={cat} open>
                     <summary>📦 {cat}</summary>
-                    {subs.map((sub) => (
-                      <details key={sub} open style={{ marginLeft: 8 }}>
-                        <summary>▸ {sub}</summary>
-                        <ul className="item-list">
-                          {(inventory[openPanel.loc]?.[cat]?.[sub] || []).map((it, idx) => (
-                            <li key={idx} className="item-row">
-                              <div className="item-text">
-                                <span className="item-name">
-                                  {it.name} <span className="item-count">({it.count}개)</span>
-                                </span>
-                                {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                              </div>
-                              {isAdmin && (
-                                <div className="item-actions">
-                                  <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>＋</button>
-                                  <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>－</button>
-                                  <button className="btn btn-default btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>✎ 이름</button>
-                                  <button className="btn btn-default btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>📝 메모</button>
+                    {subs.map((sub) => {
+                      const items = entriesToList(inventory?.[openPanel.loc]?.[cat]?.[sub]);
+                      return (
+                        <details key={sub} open style={{ marginLeft: 8 }}>
+                          <summary>▸ {sub}</summary>
+                          <ul className="item-list">
+                            {items.map((it) => (
+                              <li key={it.id} className="item-row">
+                                <div className="item-text">
+                                  <span className="item-name">
+                                    {it.name} <span className="item-count">({Number(it.count || 0)}개)</span>
+                                  </span>
+                                  {it.note && <div className="item-note">특이사항: {it.note}</div>}
                                 </div>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    ))}
+                                {isAdmin && (
+                                  <div className="item-actions">
+                                    <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, it.id, +1)}>＋</button>
+                                    <button className="btn btn-default btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, it.id, -1)}>－</button>
+                                    <button className="btn btn-default btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, it.id, it.name)}>✎ 이름</button>
+                                    <button className="btn btn-default btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, it.id, it.note)}>📝 메모</button>
+                                  </div>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      );
+                    })}
                   </details>
                 ))
               )}
@@ -793,29 +737,38 @@ function Home({ inventory, setInventory, searchTerm, setSearchTerm, logs, setLog
 }
 
 /* =======================
- * LogsPage
+ * LogsPage — push 기반 (실시간)
  * ======================= */
-function LogsPage({ logs, setLogs }) {
+function LogsPage() {
   const navigate = useNavigate();
+  const [logsMap, setLogsMap] = useState({}); // {logId: {...}}
   const [filterDate, setFilterDate] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
   const menuRef = useRef(null);
 
-  useEffect(() => saveLocalLogs(logs), [logs]);
+  // 구독
+  useEffect(() => {
+    const logRef = ref(db, "logs");
+    return onValue(logRef, (snap) => setLogsMap(snap.val() || {}));
+  }, []);
 
-  const sorted = useMemo(() => [...logs].sort((a, b) => new Date(b.ts) - new Date(a.ts)), [logs]);
-  const filteredList = filterDate ? sorted.filter((l) => l.ts.slice(0, 10) === filterDate) : sorted;
+  const logs = useMemo(() => {
+    const arr = Object.entries(logsMap).map(([id, v]) => ({ id, ...(v || {}) }));
+    arr.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+    return arr;
+  }, [logsMap]);
+
+  const filteredList = filterDate ? logs.filter((l) => (l.ts || "").slice(0, 10) === filterDate) : logs;
 
   const grouped = useMemo(
     () =>
       filteredList.reduce((acc, l) => {
-        const day = l.ts.slice(0, 10);
+        const day = (l.ts || "").slice(0, 10);
         (acc[day] = acc[day] || []).push(l);
         return acc;
       }, {}),
     [filteredList]
   );
-
   const dates = useMemo(() => Object.keys(grouped).sort((a, b) => new Date(b) - new Date(a)), [grouped]);
 
   function formatLabel(d) {
@@ -823,32 +776,38 @@ function LogsPage({ logs, setLogs }) {
     return diff === 0 ? "오늘" : diff === 1 ? "어제" : d;
   }
 
-  function editReason(i) {
-    const note = prompt("메모:", logs[i].reason || "");
+  async function editReason(logId, current) {
+    const note = prompt("메모:", current || "");
     if (note === null) return;
-    const arr = [...logs];
-    arr[i].reason = note;
-    setLogs(arr);
-    set(ref(db, "logs/"), arr).catch(() => toast.error("클라우드 저장 실패 (기록)"));
-  }
-
-  function deleteLog(i) {
-    if (window.confirm("삭제하시겠습니까?")) {
-      const next = logs.filter((_, j) => j !== i);
-      setLogs(next);
-      set(ref(db, "logs/"), next).catch(() => toast.error("클라우드 저장 실패 (기록)"));
+    try {
+      await update(ref(db, `logs/${logId}`), { reason: note });
+    } catch (e) {
+      console.error(e);
+      toast.error("메모 저장 실패");
     }
   }
 
-  function exportCSV() {
-    const data = sorted.map((l) => ({
+  async function deleteLog(logId) {
+    if (!window.confirm("삭제하시겠습니까?")) return;
+    try {
+      await set(ref(db, `logs/${logId}`), null);
+    } catch (e) {
+      console.error(e);
+      toast.error("삭제 실패");
+    }
+  }
+
+  function exportCSV(list) {
+    const data = list.map((l) => ({
       시간: l.time,
       장소: l.location,
       상위카테고리: l.category,
       하위카테고리: l.subcategory,
-      품목: l.item,
+      품목: l.itemName || "",
       증감: l.change,
-      메모: l.reason,
+      메모: l.reason || "",
+      ID: l.operatorId || "",
+      이름: l.operatorName || "",
     }));
     const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(data));
     const blob = new Blob([csv], { type: "text/csv" });
@@ -859,15 +818,17 @@ function LogsPage({ logs, setLogs }) {
     a.click();
   }
 
-  function exportExcel() {
-    const data = sorted.map((l) => ({
+  function exportExcel(list) {
+    const data = list.map((l) => ({
       시간: l.time,
       장소: l.location,
       상위카테고리: l.category,
       하위카테고리: l.subcategory,
-      품목: l.item,
+      품목: l.itemName || "",
       증감: l.change,
-      메모: l.reason,
+      메모: l.reason || "",
+      ID: l.operatorId || "",
+      이름: l.operatorName || "",
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -913,10 +874,10 @@ function LogsPage({ logs, setLogs }) {
             </button>
             {exportOpen && (
               <div className="data-menu" role="menu">
-                <button className="menu-item" onClick={() => { exportCSV(); setExportOpen(false); }}>
+                <button className="menu-item" onClick={() => { exportCSV(logs); setExportOpen(false); }}>
                   📄 CSV 내보내기
                 </button>
-                <button className="menu-item" onClick={() => { exportExcel(); setExportOpen(false); }}>
+                <button className="menu-item" onClick={() => { exportExcel(logs); setExportOpen(false); }}>
                   📑 Excel 내보내기
                 </button>
               </div>
@@ -932,26 +893,26 @@ function LogsPage({ logs, setLogs }) {
           <section key={d} style={{ marginBottom: "16px" }}>
             <h2 style={{ borderBottom: "1px solid #4b5563", paddingBottom: "4px", margin: "0 0 8px" }}>{formatLabel(d)}</h2>
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {grouped[d].map((l, i) => {
-                const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
-                return (
-                  <li key={i} className="log-item">
-                    <div className="log-text">
-                      <div style={{ fontSize: 14 }}>
-                        [{l.time}] {l.location} &gt; {l.category} &gt; {l.subcategory} / <strong>{l.item}</strong>
-                      </div>
-                      <div className={l.change > 0 ? "text-green" : "text-red"} style={{ marginTop: 4 }}>
-                        {l.change > 0 ? ` 입고+${l.change}` : ` 출고-${-l.change}`}
-                      </div>
-                      {l.reason && <div className="log-note">메모: {l.reason}</div>}
+              {grouped[d].map((l) => (
+                <li key={l.id} className="log-item">
+                  <div className="log-text">
+                    <div style={{ fontSize: 14 }}>
+                      [{l.time}] {l.location} &gt; {l.category} &gt; {l.subcategory} / <strong>{l.itemName}</strong>
                     </div>
-                    <div className="log-actions">
-                      <button className="btn btn-default" onClick={() => editReason(idx)}>{l.reason ? "메모 수정" : "메모 추가"}</button>
-                      <button className="btn btn-destructive" onClick={() => deleteLog(idx)}>삭제</button>
+                    <div className={l.change > 0 ? "text-green" : "text-red"} style={{ marginTop: 4 }}>
+                      {l.change > 0 ? ` 입고+${l.change}` : ` 출고-${-l.change}`}
                     </div>
-                  </li>
-                );
-              })}
+                    <div className="muted" style={{ marginTop: 4 }}>
+                      👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}
+                    </div>
+                    {l.reason && <div className="log-note">메모: {l.reason}</div>}
+                  </div>
+                  <div className="log-actions">
+                    <button className="btn btn-default" onClick={() => editReason(l.id, l.reason)}>{l.reason ? "메모 수정" : "메모 추가"}</button>
+                    <button className="btn btn-destructive" onClick={() => deleteLog(l.id)}>삭제</button>
+                  </div>
+                </li>
+              ))}
             </ul>
           </section>
         ))
@@ -964,12 +925,10 @@ function LogsPage({ logs, setLogs }) {
  * AppWrapper
  * ======================= */
 export default function AppWrapper() {
-  const [inventory, setInventory] = useState(getLocalInventory);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [logs, setLogs] = useState(getLocalLogs);
   const isAdmin = getLocalAdmin();
+  const [userId, setUserId] = useState(getLocalUserId);
+  const [userName, setUserName] = useState(getLocalUserName);
 
-  // 로그인 라우트용 래퍼
   const LoginShell = ({ children }) => (
     <div style={{ position: "relative", minHeight: "100vh" }}>
       <FixedBg
@@ -998,7 +957,13 @@ export default function AppWrapper() {
       <Toaster
         position="bottom-right"
         toastOptions={{
-          style: { background: "#232943", color: "#fff", fontWeight: 600, borderRadius: "1rem", fontSize: "1.08rem" },
+          style: {
+            background: "#232943",
+            color: "#fff",
+            fontWeight: 600,
+            borderRadius: "1rem",
+            fontSize: "1.08rem",
+          },
           success: { style: { background: "#181a20", color: "#2dd4bf" } },
           error: { style: { background: "#181a20", color: "#ee3a60" } },
         }}
@@ -1013,13 +978,17 @@ export default function AppWrapper() {
                 element={
                   <LoginShell>
                     <LoginPage
-                      onLogin={(pw) => {
-                        if (pw === "2500") {
+                      onLogin={({ pw, uid, name }) => {
+                        if (pw === "2500" && uid && name) {
                           saveLocalAdmin(true);
+                          localStorage.setItem("do-kkae-bi-user-id", uid);
+                          localStorage.setItem("do-kkae-bi-user-name", name);
+                          setUserId(uid);
+                          setUserName(name);
                           window.location.hash = "#/";
                           window.location.reload();
                         } else {
-                          toast.error("비밀번호가 틀렸습니다.");
+                          toast.error("입력 정보를 확인해 주세요.");
                         }
                       }}
                     />
@@ -1031,21 +1000,8 @@ export default function AppWrapper() {
           ) : (
             <>
               <Route path="/login" element={<Navigate to="/" replace />} />
-              <Route
-                path="/"
-                element={
-                  <Home
-                    inventory={inventory}
-                    setInventory={setInventory}
-                    searchTerm={searchTerm}
-                    setSearchTerm={setSearchTerm}
-                    logs={logs}
-                    setLogs={setLogs}
-                    isAdmin={isAdmin}
-                  />
-                }
-              />
-              <Route path="/logs" element={<LogsPage logs={logs} setLogs={setLogs} />} />
+              <Route path="/" element={<Home isAdmin={isAdmin} userId={userId} userName={userName} />} />
+              <Route path="/logs" element={<LogsPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </>
           )}
