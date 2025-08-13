@@ -222,23 +222,20 @@ details{ margin-bottom:6px }
 .muted{ color:var(--muted); }
 
 /* === 반응형 헤더 스택: 화면이 줄수록 타이틀↑ 검색창↓ === */
-/* 1) 태블릿 이하: 헤더 전체를 세로 스택으로 바꾸고, 검색창을 버튼 아래로 이동 */
 @media (max-width: 960px){
   .topbar{ flex-direction:column; align-items:stretch; gap:10px; padding:12px }
-  .logo{ align-self:flex-start; font-size:clamp(18px,4.2vw,22px) } /* 타이틀은 항상 맨 위 */
+  .logo{ align-self:flex-start; font-size:clamp(18px,4.2vw,22px) }
   .toolbar{
     display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-start;
   }
   .toolbar .search-input{
-    order:2;                        /* 버튼들 다음(아래)에 배치 */
-    flex:1 1 100%;                  /* 한 줄 전체 차지 */
-    min-width:0;                    /* overflow 방지 */
+    order:2;
+    flex:1 1 100%;
+    min-width:0;
     margin-top:4px;
   }
-  .toolbar > .btn, .toolbar > .menu-wrap{ order:1 } /* 데이터/기록/로그아웃은 위(타이틀 아래) */
+  .toolbar > .btn, .toolbar > .menu-wrap{ order:1 }
 }
-
-/* 2) 모바일(≤600px): 검색창 100%폭, 카드/로그는 1열+내부 스크롤 보강 */
 @media (max-width:600px){
   .stage{ padding:10px; }
   .topbar{ position:sticky; top:8px; }
@@ -249,4 +246,110 @@ details{ margin-bottom:6px }
   .popup{ width:94vw; max-height:88vh; }
   .popup-body{ max-height:74vh; }
   .login-stage{ min-height:100dvh; }
+}
+
+/* === ✅ 추가: 카테고리/하위카테고리 공간감 피드백 === */
+.summary, .sub-summary {
+  transition: background .25s ease, box-shadow .25s ease, transform .12s ease, color .2s ease;
+}
+details[open] > .summary {
+  background: linear-gradient(180deg, rgba(83,255,233,.10), rgba(136,167,255,.06));
+  box-shadow:
+    0 0 0 1px rgba(136,167,255,.25) inset,
+    0 8px 24px rgba(83,255,233,.18);
+  transform: translateY(-1px) scale(1.015);
+  border-radius: 10px;
+}
+.sub-summary {
+  position: relative;
+  padding-left: 12px;
+}
+.sub-summary::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 50%;
+  width: 6px; height: 10px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(83,255,233,.65), rgba(136,167,255,.4));
+  box-shadow: 0 0 14px rgba(83,255,233,.5);
+  transition: height .22s ease, box-shadow .22s ease, opacity .2s ease;
+  opacity: .75;
+}
+details[open] > .sub-summary::before {
+  height: 16px;
+  box-shadow: 0 0 22px rgba(83,255,233,.8), 0 0 36px rgba(136,167,255,.5);
+  opacity: 1;
+}
+
+/* === ✅ 추가: 네온 스크롤바 (WebKit + Firefox) === */
+.card-body::-webkit-scrollbar,
+.panel .log-list::-webkit-scrollbar,
+.popup-body::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.card-body::-webkit-scrollbar-track,
+.panel .log-list::-webkit-scrollbar-track,
+.popup-body::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track {
+  background: rgba(11,18,38,.35);
+  border-radius: 10px;
+}
+.card-body::-webkit-scrollbar-thumb,
+.panel .log-list::-webkit-scrollbar-thumb,
+.popup-body::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(83,255,233,.55), rgba(136,167,255,.5));
+  border: 2px solid rgba(7,10,20,.85);
+  border-radius: 10px;
+  box-shadow: 0 0 10px rgba(83,255,233,.35);
+}
+.card-body::-webkit-scrollbar-thumb:hover,
+.panel .log-list::-webkit-scrollbar-thumb:hover,
+.popup-body::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover {
+  box-shadow: 0 0 18px rgba(83,255,233,.6);
+}
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(83,255,233,.6) rgba(11,18,38,.35);
+}
+/* === LogsPage: 고정 액션 버튼 === */
+.log-row {
+  position: relative;          /* 자식 절대배치 기준 */
+  padding-right: 132px;        /* 오른쪽에 버튼 자리 확보 */
+}
+
+.log-row .log-actions {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%); /* 세로 중앙 고정 */
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;         /* 줄바꿈 방지 (버튼 줄 안깨짐) */
+  z-index: 1;                  /* 텍스트 위에 */
+}
+
+/* 넓이 줄어들면 여백 조금 줄이기 */
+@media (max-width: 960px) {
+  .log-row { padding-right: 116px; }
+  .log-row .log-actions { right: 10px; }
+}
+
+/* 모바일(≤600px): 버튼을 항목 하단-우측에 고정해 겹침 방지 */
+@media (max-width: 600px) {
+  .log-row {
+    padding-right: 12px;        /* 본문은 꽉 채우고 */
+    padding-bottom: 48px;       /* 아래에 버튼 자리 확보 */
+  }
+  .log-row .log-actions {
+    top: auto;
+    bottom: 10px;
+    right: 12px;
+    transform: none;            /* 하단 고정 */
+  }
 }

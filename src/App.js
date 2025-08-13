@@ -32,6 +32,16 @@ const subcategories = {
   "기체 개수": [],
 };
 
+/* ✅ 상위 카테고리 아이콘 매핑 */
+const catIcons = {
+  공구: "🛠️",
+  소모품: "🔩",
+  "드론 제어부": "🧠",
+  "조종기 개수": "🎮",
+  "기체 개수": "🚁",
+};
+const catIcon = (cat) => catIcons[cat] || "📦";
+
 /* localStorage helpers */
 function getLocalInventory() {
   const d = localStorage.getItem("do-kkae-bi-inventory");
@@ -358,34 +368,22 @@ function Home({
     const count = Number(prompt("초기 수량 입력:"));
     if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
 
-// ⛔ 기존 while(true) 재입력 로직 삭제
-// ✅ 단일 입력 + 중복이면 취소(리턴)
-const input = prompt("추가할 품목명을 입력하세요:");
-if (!input) return; // 취소 또는 빈값 → 중단
-const name = input.trim();
+    // ⛔ 기존 while(true) 재입력 로직 삭제
+    // ✅ 단일 입력 + 중복이면 취소(리턴)
+    const input = prompt("추가할 품목명을 입력하세요:");
+    if (!input) return; // 취소 또는 빈값 → 중단
+    const name = input.trim();
 
-// 중복 검사(세 장소 전체 cat/sub 범위)
-const existsAnywhere = locations.some((L) =>
-  (inventory[L]?.[cat]?.[sub] || []).some((it) => (it.name || "") === name)
-);
-if (existsAnywhere) {
-  toast.error("동일한 품목명이 존재합니다");
-  return; // 재입력 없이 즉시 종료
-}
+    // 중복 검사(세 장소 전체 cat/sub 범위)
+    const existsAnywhere = locations.some((L) =>
+      (inventory[L]?.[cat]?.[sub] || []).some((it) => (it.name || "") === name)
+    );
+    if (existsAnywhere) {
+      toast.error("동일한 품목명이 존재합니다");
+      return; // 재입력 없이 즉시 종료
+    }
 
-// 추가
-setInventory((prev) => {
-  const inv = JSON.parse(JSON.stringify(prev));
-  locations.forEach((L) => {
-    if (!inv[L][cat]) inv[L][cat] = {};
-    if (!inv[L][cat][sub]) inv[L][cat][sub] = [];
-    inv[L][cat][sub].push({ name, count: L === loc ? count : 0, note: "" });
-  });
-  return inv;
-});
-toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
-
-    // 추가
+    // 추가 (한 번만!)
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
       locations.forEach((L) => {
@@ -395,7 +393,6 @@ toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
       });
       return inv;
     });
-
     toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
   }
 
@@ -646,7 +643,8 @@ toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
             <div className="card-body">
               {Object.entries(subcategories).map(([cat, subs]) => (
                 <details key={cat} ref={(el) => (categoryRefs.current[`${loc}-${cat}`] = el)}>
-                  <summary className="summary">📦 {cat}</summary>
+                  {/* ✅ 이모지 적용 */}
+                  <summary className="summary">{catIcon(cat)} {cat}</summary>
                   {subs.map((sub) => (
                     <details
                       key={sub}
@@ -726,7 +724,8 @@ toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
           <div className="card-body">
             {Object.entries(subcategories).map(([cat, subs]) => (
               <details key={cat} ref={(el) => (categoryRefs.current[`전체-${cat}`] = el)}>
-                <summary className="summary">📦 {cat}</summary>
+                {/* ✅ 요약 카드에도 이모지 적용 */}
+                <summary className="summary">{catIcon(cat)} {cat}</summary>
                 {subs.map((sub) => (
                   <details key={sub} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
                     <summary className="sub-summary">▸ {sub}</summary>
@@ -773,7 +772,8 @@ toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
               {openPanel.kind === "summary" ? (
                 Object.entries(subcategories).map(([cat, subs]) => (
                   <details key={cat} open>
-                    <summary className="summary">📦 {cat}</summary>
+                    {/* ✅ 팝업(요약)에도 적용 */}
+                    <summary className="summary">{catIcon(cat)} {cat}</summary>
                     {subs.map((sub) => (
                       <details key={sub} open className="sub-details">
                         <summary className="sub-summary">▸ {sub}</summary>
@@ -802,7 +802,8 @@ toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
               ) : (
                 Object.entries(subcategories).map(([cat, subs]) => (
                   <details key={cat} open>
-                    <summary className="summary">📦 {cat}</summary>
+                    {/* ✅ 팝업(장소별)에도 적용 */}
+                    <summary className="summary">{catIcon(cat)} {cat}</summary>
                     {subs.map((sub) => (
                       <details key={sub} open className="sub-details">
                         <summary className="sub-summary">▸ {sub}</summary>
@@ -935,7 +936,7 @@ function LogsPage({ logs, setLogs }) {
       document.addEventListener("mousedown", onClickOutside);
       document.addEventListener("touchstart", onClickOutside);
     }
-  return () => {
+    return () => {
       document.removeEventListener("mousedown", onClickOutside);
       document.removeEventListener("touchstart", onClickOutside);
     };
