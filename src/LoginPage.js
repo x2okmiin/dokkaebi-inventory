@@ -13,12 +13,31 @@ export default function LoginPage({ onLogin }) {
   };
 
   return (
-    <div className="login-wrap fade-in">
-      <div className="login-card login-pop">
-        <h1 className="dk-main-title" style={{ textAlign: "center", marginBottom: "0.75rem" }}>
-          도깨비 인벤토리
-        </h1>
-        <p className="login-sub">관리자 모드로 들어가려면 정보를 입력해주세요</p>
+    <div className="login-stage">
+      {/* 로고 배경(유지) */}
+      <div className="fixed-bg">
+        <img
+          src={`${process.env.PUBLIC_URL}/white.png`}
+          alt=""
+          className="fixed-bg-img"
+          style={{ maxWidth: "min(70vw, 900px)", maxHeight: "min(65vh, 700px)" }}
+        />
+      </div>
+
+      {/* 네온 오로라/그리드 */}
+      <div className="login-orbit" />
+      <div className="bg-grid" aria-hidden />
+
+      <div className="login-card neon-rise">
+        <div className="brand">
+          <div className="brand-badge">
+            <span className="dot dot-cyan" />
+            <span className="dot dot-purple" />
+            <span className="dot dot-blue" />
+          </div>
+          <h1 className="brand-title">DOKKAEBI INVENTORY</h1>
+          <p className="brand-sub">드론축구단 재고·입출고 관리 콘솔</p>
+        </div>
 
         <form onSubmit={submit} className="login-form">
           <label className="login-label">ID (학번)</label>
@@ -28,7 +47,7 @@ export default function LoginPage({ onLogin }) {
               type="text"
               value={uid}
               onChange={(e) => setUid(e.target.value)}
-              placeholder="예: 202036099"
+              placeholder="예: 202436029"
               autoComplete="username"
               required
             />
@@ -61,7 +80,7 @@ export default function LoginPage({ onLogin }) {
             />
             <button
               type="button"
-              className="btn btn-outline login-eye-side"
+              className="btn btn-ghost login-eye-side"
               onClick={() => setShow((v) => !v)}
               title={show ? "숨기기" : "보기"}
               aria-label="비밀번호 보기 전환"
@@ -70,7 +89,7 @@ export default function LoginPage({ onLogin }) {
             </button>
           </div>
 
-          <button type="submit" className="btn btn-default login-submit">
+          <button type="submit" className="btn btn-primary login-submit">
             🔑 로그인
           </button>
         </form>
