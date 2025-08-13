@@ -353,3 +353,37 @@ body::-webkit-scrollbar-thumb:hover {
     transform: none;            /* 하단 고정 */
   }
 }
+/* === 스크롤 중앙 정렬 (JS 수정 없이) === */
+/* 헤더 높이에 맞춰 중앙 보정용 변수 */
+:root {
+  --header-h: 72px;            /* 데스크톱 기본 헤더 높이 근사치 */
+  --center-pad: calc(50vh - var(--header-h));
+}
+
+/* 반응형에서 헤더가 더 커지므로 값 보정 */
+@media (max-width: 960px) {
+  :root { --header-h: 96px; }
+}
+@media (max-width: 600px) {
+  :root { --header-h: 120px; }
+}
+
+/* 문서 스크롤 시: 중앙 기준으로 패딩을 줘서 scrollIntoView가 중앙 근처에 멈춤 */
+html {
+  scroll-padding-top: var(--center-pad);
+  scroll-behavior: smooth;   /* 부드러운 스크롤 */
+}
+
+/* 내부 스크롤 컨테이너(카드/패널/팝업)에서도 동일 동작 */
+.card-body,
+.panel,
+.popup-body {
+  scroll-padding-top: var(--center-pad);
+}
+
+/* 스크롤 대상 요소들(요약/하위요약/아이템)에 약간의 안전 여유 */
+.summary,
+.sub-summary,
+.item-row {
+  scroll-margin-top: 8px;   /* 너무 딱 붙지 않게 소량 여유 */
+}

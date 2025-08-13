@@ -29,7 +29,7 @@ const subcategories = {
   ],
   "드론 제어부": ["FC", "FC ESC 연결선", "ESC", "모터", "수신기", "콘덴서", "제어부 세트"],
   "조종기 개수": ["학교", "개인"],
-  "기체 개수": [],
+  "기체 개수": ["학교", "개인"],
 };
 
 /* ✅ 상위 카테고리 아이콘 매핑 */
@@ -514,7 +514,12 @@ function Home({
             placeholder="검색: 품목명 입력…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-          />
+            onFocus={() => {
+              setTimeout(() => {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+                }, 100);
+            }}
+          />  
 
           <div className="menu-wrap" ref={dataMenuRef}>
             <button
