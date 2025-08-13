@@ -7,7 +7,7 @@ import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
 
 /* Firebase */
-import { db, ref, set, onValue } from "./firebase";
+import { db, ref, set, onValue, update, push, runTransaction } from "./firebase";
 
 /* 상수 */
 const locations = ["동아리방", "비행장", "교수님방"];
@@ -813,7 +813,7 @@ function LogsPage({ logs, setLogs }) {
     () =>
       filteredList.reduce((acc, l) => {
         const day = l.ts.slice(0, 10);
-        (acc[day] = acc[day] || []).push(l);
+        (acc[day] = (acc[day] || [])).push(l);
         return acc;
       }, {}),
     [filteredList]

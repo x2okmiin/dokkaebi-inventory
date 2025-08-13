@@ -1,8 +1,16 @@
 // src/firebase.js
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue } from "firebase/database";
+import {
+  getDatabase,
+  ref,
+  set,
+  onValue,
+  update,
+  push,
+  runTransaction,
+} from "firebase/database";
 
-export { ref, set, onValue };
+export { ref, set, onValue, update, push, runTransaction };
 
 const firebaseConfig = {
   apiKey: "AIzaSyB_dbko0nrKNTGUP_5SJBjLAXZp8wokVP8",
