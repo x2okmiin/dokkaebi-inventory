@@ -7,7 +7,7 @@ import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
 
 /* Firebase */
-import { db, ref, set, onValue, update, push, runTransaction } from "./firebase";
+import { db, ref, set, onValue } from "./firebase";
 
 /* 상수 */
 const locations = ["동아리방", "비행장", "교수님방"];
@@ -327,17 +327,65 @@ function Home({
     });
   }
 
+  /* === 변경됨: 카테고리 번호 선택 + '직접 입력한 품목명' & 중복 검사 === */
   function handleAddNewItem(loc) {
     if (!isAdmin) return;
-    const cat = prompt("상위 카테고리 선택:\n" + Object.keys(subcategories).join(", "));
-    if (!cat || !subcategories[cat]) return toast.error("올바른 카테고리가 아닙니다.");
-    const sub = prompt("하위 카테고리 선택:\n" + subcategories[cat].join(", "));
-    if (!sub || !subcategories[cat].includes(sub)) return toast.error("올바른 하위카테고리가 아닙니다.");
-    const name = prompt("추가할 품목명:");
-    if (!name) return;
+
+    // 상위 카테고리 번호 선택
+    const catKeys = Object.keys(subcategories);
+    const catPick = prompt(
+      "상위 카테고리 번호 선택:\n" + catKeys.map((c, i) => `${i + 1}. ${c}`).join("\n")
+    );
+    const catIdx = Number(catPick);
+    if (!Number.isInteger(catIdx) || catIdx < 1 || catIdx > catKeys.length) {
+      return toast.error("올바른 번호가 아닙니다.");
+    }
+    const cat = catKeys[catIdx - 1];
+
+    // 하위 카테고리 번호 선택
+    const subs = subcategories[cat] || [];
+    if (subs.length === 0) return toast.error("해당 카테고리는 하위 카테고리가 없습니다.");
+    const subPick = prompt(
+      `하위 카테고리 번호 선택 [${cat}]:\n` + subs.map((s, i) => `${i + 1}. ${s}`).join("\n")
+    );
+    const subIdx = Number(subPick);
+    if (!Number.isInteger(subIdx) || subIdx < 1 || subIdx > subs.length) {
+      return toast.error("올바른 번호가 아닙니다.");
+    }
+    const sub = subs[subIdx - 1];
+
+    // 초기 수량
     const count = Number(prompt("초기 수량 입력:"));
     if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
 
+// ⛔ 기존 while(true) 재입력 로직 삭제
+// ✅ 단일 입력 + 중복이면 취소(리턴)
+const input = prompt("추가할 품목명을 입력하세요:");
+if (!input) return; // 취소 또는 빈값 → 중단
+const name = input.trim();
+
+// 중복 검사(세 장소 전체 cat/sub 범위)
+const existsAnywhere = locations.some((L) =>
+  (inventory[L]?.[cat]?.[sub] || []).some((it) => (it.name || "") === name)
+);
+if (existsAnywhere) {
+  toast.error("동일한 품목명이 존재합니다");
+  return; // 재입력 없이 즉시 종료
+}
+
+// 추가
+setInventory((prev) => {
+  const inv = JSON.parse(JSON.stringify(prev));
+  locations.forEach((L) => {
+    if (!inv[L][cat]) inv[L][cat] = {};
+    if (!inv[L][cat][sub]) inv[L][cat][sub] = [];
+    inv[L][cat][sub].push({ name, count: L === loc ? count : 0, note: "" });
+  });
+  return inv;
+});
+toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
+
+    // 추가
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
       locations.forEach((L) => {
@@ -347,6 +395,8 @@ function Home({
       });
       return inv;
     });
+
+    toast.success(`추가됨: [${cat} > ${sub}] ${name} (${count}개)`);
   }
 
   function handleDeleteItem() {
@@ -797,7 +847,7 @@ function Home({
   );
 }
 
-/* LogsPage */
+/* LogsPage (변경 없음) */
 function LogsPage({ logs, setLogs }) {
   const navigate = useNavigate();
   const [filterDate, setFilterDate] = useState("");
@@ -813,7 +863,7 @@ function LogsPage({ logs, setLogs }) {
     () =>
       filteredList.reduce((acc, l) => {
         const day = l.ts.slice(0, 10);
-        (acc[day] = (acc[day] || [])).push(l);
+        (acc[day] = acc[day] || []).push(l);
         return acc;
       }, {}),
     [filteredList]
@@ -885,7 +935,7 @@ function LogsPage({ logs, setLogs }) {
       document.addEventListener("mousedown", onClickOutside);
       document.addEventListener("touchstart", onClickOutside);
     }
-    return () => {
+  return () => {
       document.removeEventListener("mousedown", onClickOutside);
       document.removeEventListener("touchstart", onClickOutside);
     };
