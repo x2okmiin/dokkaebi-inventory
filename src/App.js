@@ -6,13 +6,13 @@ import "./App.css";
 import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
 
-/* Firebase */
-import { db, ref, set, onValue } from "./firebase";
+/* Firebase 래퍼 사용 (ref("path") 형태) */
+import { ref, set, onValue } from "./firebase";
 
 /* =========================
    1) 카테고리/스키마 정의
-   - 배열: 2단계(상위→하위) 끝
-   - 객체: 3단계(상위→하위→최하위) 존재
+   - 배열: 2단계(상위→하위)
+   - 객체: 3단계(상위→하위→최하위)
    ========================= */
 const locations = ["동아리방", "비행장", "교수님방"];
 
@@ -68,7 +68,6 @@ function getLocalInventory() {
           base[loc][cat][sub] = [];
         });
       } else {
-        // object → 하위에 또 객체/배열 혼재 가능
         Object.entries(subs).forEach(([sub, subs2]) => {
           if (Array.isArray(subs2)) {
             base[loc][cat][sub] = [];
@@ -105,9 +104,9 @@ function getLocalUserId() {
 }
 function getLocalUserName() {
   return localStorage.getItem("do-kkae-bi-user-name") || "";
-}
 
 /* 고정 배경 */
+}
 function FixedBg({
   src,
   overlay = null,
@@ -145,9 +144,6 @@ function NeonBackdrop() {
 /* =========================
    3) 공용 유틸 (3단계 대응)
    ========================= */
-
-// inventory[loc][cat][sub] 가 배열(2단계)인지, 객체(3단계)인지 판별(임시 주석)
-// const isLeafArray = (v) => Array.isArray(v);
 
 // 안전 접근: 배열 항목 가져오기
 function getItems(inv, loc, cat, sub, sub2) {
@@ -198,19 +194,23 @@ function Home({
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const dataMenuRef = useRef(null);
   const [openPanel, setOpenPanel] = useState(null);
-
   const [editKey, setEditKey] = useState(null); // 행 단일 편집
 
+  // ✅ RTDB 루프 방지 플래그
   const applyingCloudRef = useRef({ inv: false, logs: false });
 
-  /* 쓰기(관리자), 로컬 저장 */
+  /* -------------------------
+     Firebase 실시간 동기화
+     ------------------------- */
+
+  // 로컬 → 클라우드 (관리자만)
   useEffect(() => {
     if (applyingCloudRef.current.inv) {
       applyingCloudRef.current.inv = false;
       return;
     }
     saveLocalInventory(inventory);
-    if (isAdmin) set(ref(db, "inventory/"), inventory).catch(() => {});
+    if (isAdmin) set(ref("inventory/"), inventory).catch(() => {});
   }, [inventory, isAdmin]);
 
   useEffect(() => {
@@ -219,15 +219,12 @@ function Home({
       return;
     }
     saveLocalLogs(logs);
-    if (isAdmin) set(ref(db, "logs/"), logs).catch(() => {});
+    if (isAdmin) set(ref("logs/"), logs).catch(() => {});
   }, [logs, isAdmin]);
 
-  /* 읽기 구독 */
+  // 클라우드 → 로컬 (구독)
   useEffect(() => {
-    const invRef = ref(db, "inventory/");
-    const logRef = ref(db, "logs/");
-
-    const unsubInv = onValue(invRef, (snap) => {
+    const unsubInv = onValue(ref("inventory/"), (snap) => {
       if (!snap.exists()) return;
       const cloud = snap.val();
       if (JSON.stringify(cloud) !== JSON.stringify(inventory)) {
@@ -236,7 +233,7 @@ function Home({
       }
     });
 
-    const unsubLogs = onValue(logRef, (snap) => {
+    const unsubLogs = onValue(ref("logs/"), (snap) => {
       if (!snap.exists()) return;
       const cloud = snap.val();
       if (JSON.stringify(cloud) !== JSON.stringify(logs)) {
@@ -265,8 +262,8 @@ function Home({
       if (dataMenuRef.current && !dataMenuRef.current.contains(e.target)) setDataMenuOpen(false);
     }
     if (dataMenuOpen) {
-      document.addEventListener("mousedown", onClickOutside);
-      document.addEventListener("touchstart", onClickOutside);
+      document.addEventListener("mousedown", onClickOutside, { passive: true });
+      document.addEventListener("touchstart", onClickOutside, { passive: true });
     }
     return () => {
       document.removeEventListener("mousedown", onClickOutside);
@@ -316,7 +313,6 @@ function Home({
             });
           });
         } else {
-          // object → 3단계 가능
           Object.entries(subs).forEach(([sub, subs2]) => {
             if (Array.isArray(subs2)) {
               (getItems(inventory, loc, cat, sub) || []).forEach((item) => {
@@ -519,7 +515,7 @@ function Home({
     toast.success(`추가됨: [${cat} > ${sub}${sub2 ? " > " + sub2 : ""}] ${name} (${count}개)`);
   }
 
-  /* 전체 삭제(이름으로) — 기존 동일 */
+  /* 전체 삭제(이름으로) */
   function handleDeleteItem() {
     if (!isAdmin) return;
     const name = prompt("삭제할 품목 이름을 입력하세요:");
@@ -585,7 +581,7 @@ function Home({
     const out = [];
     Object.entries(inventory).forEach(([loc, cats]) => {
       Object.entries(cats || {}).forEach(([cat, subs]) => {
-        if (Array.isArray(subs)) return; // 방어 (정상 구조는 object)
+        if (Array.isArray(subs)) return;
         Object.entries(subs || {}).forEach(([sub, node]) => {
           if (Array.isArray(node)) {
             (node || []).forEach((i) => {
@@ -618,7 +614,6 @@ function Home({
   }, [filtered]);
 
   function scrollToCategory(loc, cat, sub, itemName, sub2 = null) {
-    // 모든 해당 loc의 details 닫기
     Object.keys(categoryRefs.current).forEach((k) => {
       if (k.startsWith(`${loc}-`)) {
         const el = categoryRefs.current[k];
@@ -711,13 +706,9 @@ function Home({
             </button>
           )}
         </div>
-          </header>
-          {syncing && (
-            <div className="sync-indicator">
-              <span className="spinner" /> 실시간 동기화…
-            </div>
-          )}
-      {/* 동기화 표시 */}
+      </header>
+
+      {/* 동기화 표시 (헤더 바로 아래 1곳만) */}
       {syncing && (
         <div className="sync-indicator">
           <span className="spinner" /> 실시간 동기화…
@@ -806,7 +797,7 @@ function Home({
 
                   {/* 하위 (2단계 or 3단계 분기) */}
                   {Array.isArray(subs) ? (
-                    // 🔹 2단계 끝 (배열)
+                    // 🔹 2단계 leaf
                     subs.map((sub) => (
                       <details
                         key={sub}
@@ -849,9 +840,6 @@ function Home({
                                           <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(loc, cat, sub, idx)}>
                                             📝 메모
                                           </button>
-                                        </div>
-                                        <div className="edit-note-preview">
-                                          {it.note ? `특이사항: ${it.note}` : "메모 없음"}
                                         </div>
                                       </>
                                     )}
@@ -1039,90 +1027,34 @@ function Home({
           </div>
         ))}
       </section>
-      {/* ▼ [복구] 확대보기 팝업 */}
-{openPanel && (
-  <div className="overlay" onClick={() => setOpenPanel(null)}>
-    <div className="popup glass neon-rise" onClick={(e) => e.stopPropagation()}>
-      <div className="popup-head">
-        <h3 className="popup-title">
-          {openPanel.kind === "summary"
-            ? "전체 (확대 보기)"
-            : `${openPanel.loc} (확대 보기)`}
-        </h3>
-        <button className="btn btn-ghost" onClick={() => setOpenPanel(null)}>
-          닫기
-        </button>
-      </div>
 
-      <div className="popup-body">
-        {openPanel.kind === "summary" ? (
-          /* 전체(요약) 확대: 2/3단계 모두 대응 */
-          Object.entries(subcategories).map(([cat, subs]) => (
-            <details key={cat} open>
-              <summary className="summary">
-                {catIcon(cat)} {cat}
-              </summary>
+      {/* ▼ 확대보기 팝업 */}
+      {openPanel && (
+        <div className="overlay" onClick={() => setOpenPanel(null)}>
+          <div className="popup glass neon-rise" onClick={(e) => e.stopPropagation()}>
+            <div className="popup-head">
+              <h3 className="popup-title">
+                {openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}
+              </h3>
+              <button className="btn btn-ghost" onClick={() => setOpenPanel(null)}>
+                닫기
+              </button>
+            </div>
 
-              {Array.isArray(subs) ? (
-                subs.map((sub) => (
-                  <details key={sub} open className="sub-details">
-                    <summary className="sub-summary">▸ {sub}</summary>
-                    <ul className="item-list">
-                      {Object.entries(
-                        locations.reduce((acc, L) => {
-                          getItems(inventory, L, cat, sub).forEach((it) => {
-                            acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                          });
-                          return acc;
-                        }, {})
-                      ).map(([name, count]) => (
-                        <li key={name} className="item-row">
-                          <div className="item-text">
-                            <span className="item-name">
-                              <span className="item-title">{name}</span>
-                              <span className="item-count">({count}개)</span>
-                            </span>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ))
-              ) : (
-                Object.entries(subs).map(([sub, subs2]) =>
-                  Array.isArray(subs2) ? (
-                    <details key={sub} open className="sub-details">
-                      <summary className="sub-summary">▸ {sub}</summary>
-                      <ul className="item-list">
-                        {Object.entries(
-                          locations.reduce((acc, L) => {
-                            getItems(inventory, L, cat, sub).forEach((it) => {
-                              acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                            });
-                            return acc;
-                          }, {})
-                        ).map(([name, count]) => (
-                          <li key={name} className="item-row">
-                            <div className="item-text">
-                              <span className="item-name">
-                                <span className="item-title">{name}</span>
-                                <span className="item-count">({count}개)</span>
-                              </span>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : (
-                    <details key={sub} open className="sub-details">
-                      <summary className="sub-summary">▸ {sub}</summary>
-                      {Object.keys(subs2).map((sub2) => (
-                        <details key={sub2} open className="sub-details">
-                          <summary className="sub-summary">▸ {sub2}</summary>
+            <div className="popup-body">
+              {openPanel.kind === "summary" ? (
+                Object.entries(subcategories).map(([cat, subs]) => (
+                  <details key={cat} open>
+                    <summary className="summary">{catIcon(cat)} {cat}</summary>
+
+                    {Array.isArray(subs) ? (
+                      subs.map((sub) => (
+                        <details key={sub} open className="sub-details">
+                          <summary className="sub-summary">▸ {sub}</summary>
                           <ul className="item-list">
                             {Object.entries(
                               locations.reduce((acc, L) => {
-                                getItems(inventory, L, cat, sub, sub2).forEach((it) => {
+                                getItems(inventory, L, cat, sub).forEach((it) => {
                                   acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
                                 });
                                 return acc;
@@ -1139,190 +1071,77 @@ function Home({
                             ))}
                           </ul>
                         </details>
-                      ))}
-                    </details>
-                  )
-                )
-              )}
-            </details>
-          ))
-        ) : (
-          /* 특정 장소 확대: 2/3단계 모두 대응 */
-          Object.entries(subcategories).map(([cat, subs]) => (
-            <details key={cat} open>
-              <summary className="summary">
-                {catIcon(cat)} {cat}
-              </summary>
-
-              {Array.isArray(subs) ? (
-                subs.map((sub) => (
-                  <details key={sub} open className="sub-details">
-                    <summary className="sub-summary">▸ {sub}</summary>
-                    <ul className="item-list">
-                      {getItems(inventory, openPanel.loc, cat, sub).map((it, idx) => {
-                        const rowKey = `${openPanel.loc}|${cat}|${sub}|${it.name}|${idx}`;
-                        const open = editKey === rowKey;
-                        return (
-                          <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
-                            <div className="item-text">
-                              <span className="item-name">
-                                <span className="item-title">{it.name}</span>
-                                <span className="item-count">({it.count}개)</span>
-                              </span>
-
-                              <div className="item-edit">
-                                {isAdmin && (
-                                  <>
-                                    <div className="edit-toolbar">
-                                      <button
-                                        className="btn btn-ghost btn-compact"
-                                        onClick={() =>
-                                          handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)
-                                        }
-                                      >
-                                        ＋ 입고
-                                      </button>
-                                      <button
-                                        className="btn btn-ghost btn-compact"
-                                        onClick={() =>
-                                          handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)
-                                        }
-                                      >
-                                        － 출고
-                                      </button>
-                                      <button
-                                        className="btn btn-ghost btn-compact"
-                                        onClick={() =>
-                                          handleEditItemName(openPanel.loc, cat, sub, idx)
-                                        }
-                                      >
-                                        ✎ 이름
-                                      </button>
-                                      <button
-                                        className="btn btn-ghost btn-compact"
-                                        onClick={() =>
-                                          handleEditItemNote(openPanel.loc, cat, sub, idx)
-                                        }
-                                      >
-                                        📝 메모
-                                      </button>
-                                    </div>
-                                    <div className="edit-note-preview">
-                                      {it.note ? `특이사항: ${it.note}` : "메모 없음"}
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-
-                              {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                            </div>
-
-                            {isAdmin && (
-                              <div className="item-actions">
-                                <button
-                                  className="btn btn-secondary btn-compact"
-                                  onClick={() => setEditKey(open ? null : rowKey)}
-                                  title="이 아이템 수정"
-                                >
-                                  {open ? "닫기" : "수정"}
-                                </button>
-                              </div>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
+                      ))
+                    ) : (
+                      Object.entries(subs).map(([sub, subs2]) =>
+                        Array.isArray(subs2) ? (
+                          <details key={sub} open className="sub-details">
+                            <summary className="sub-summary">▸ {sub}</summary>
+                            <ul className="item-list">
+                              {Object.entries(
+                                locations.reduce((acc, L) => {
+                                  getItems(inventory, L, cat, sub).forEach((it) => {
+                                    acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
+                                  });
+                                  return acc;
+                                }, {})
+                              ).map(([name, count]) => (
+                                <li key={name} className="item-row">
+                                  <div className="item-text">
+                                    <span className="item-name">
+                                      <span className="item-title">{name}</span>
+                                      <span className="item-count">({count}개)</span>
+                                    </span>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        ) : (
+                          <details key={sub} open className="sub-details">
+                            <summary className="sub-summary">▸ {sub}</summary>
+                            {Object.keys(subs2).map((sub2) => (
+                              <details key={sub2} open className="sub-details">
+                                <summary className="sub-summary">▸ {sub2}</summary>
+                                <ul className="item-list">
+                                  {Object.entries(
+                                    locations.reduce((acc, L) => {
+                                      getItems(inventory, L, cat, sub, sub2).forEach((it) => {
+                                        acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
+                                      });
+                                      return acc;
+                                    }, {})
+                                  ).map(([name, count]) => (
+                                    <li key={name} className="item-row">
+                                      <div className="item-text">
+                                        <span className="item-name">
+                                          <span className="item-title">{name}</span>
+                                          <span className="item-count">({count}개)</span>
+                                        </span>
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            ))}
+                          </details>
+                        )
+                      )
+                    )}
                   </details>
                 ))
               ) : (
-                Object.entries(subs).map(([sub, subs2]) =>
-                  Array.isArray(subs2) ? (
-                    <details key={sub} open className="sub-details">
-                      <summary className="sub-summary">▸ {sub}</summary>
-                      <ul className="item-list">
-                        {getItems(inventory, openPanel.loc, cat, sub).map((it, idx) => {
-                          const rowKey = `${openPanel.loc}|${cat}|${sub}|${it.name}|${idx}`;
-                          const open = editKey === rowKey;
-                          return (
-                            <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
-                              <div className="item-text">
-                                <span className="item-name">
-                                  <span className="item-title">{it.name}</span>
-                                  <span className="item-count">({it.count}개)</span>
-                                </span>
+                Object.entries(subcategories).map(([cat, subs]) => (
+                  <details key={cat} open>
+                    <summary className="summary">{catIcon(cat)} {cat}</summary>
 
-                                <div className="item-edit">
-                                  {isAdmin && (
-                                    <>
-                                      <div className="edit-toolbar">
-                                        <button
-                                          className="btn btn-ghost btn-compact"
-                                          onClick={() =>
-                                            handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)
-                                          }
-                                        >
-                                          ＋ 입고
-                                        </button>
-                                        <button
-                                          className="btn btn-ghost btn-compact"
-                                          onClick={() =>
-                                            handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)
-                                          }
-                                        >
-                                          － 출고
-                                        </button>
-                                        <button
-                                          className="btn btn-ghost btn-compact"
-                                          onClick={() =>
-                                            handleEditItemName(openPanel.loc, cat, sub, idx)
-                                          }
-                                        >
-                                          ✎ 이름
-                                        </button>
-                                        <button
-                                          className="btn btn-ghost btn-compact"
-                                          onClick={() =>
-                                            handleEditItemNote(openPanel.loc, cat, sub, idx)
-                                          }
-                                        >
-                                          📝 메모
-                                        </button>
-                                      </div>
-                                      <div className="edit-note-preview">
-                                        {it.note ? `특이사항: ${it.note}` : "메모 없음"}
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
-
-                                {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                              </div>
-
-                              {isAdmin && (
-                                <div className="item-actions">
-                                  <button
-                                    className="btn btn-secondary btn-compact"
-                                    onClick={() => setEditKey(open ? null : rowKey)}
-                                    title="이 아이템 수정"
-                                  >
-                                    {open ? "닫기" : "수정"}
-                                  </button>
-                                </div>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </details>
-                  ) : (
-                    <details key={sub} open className="sub-details">
-                      <summary className="sub-summary">▸ {sub}</summary>
-                      {Object.keys(subs2).map((sub2) => (
-                        <details key={sub2} open className="sub-details">
-                          <summary className="sub-summary">▸ {sub2}</summary>
+                    {Array.isArray(subs) ? (
+                      subs.map((sub) => (
+                        <details key={sub} open className="sub-details">
+                          <summary className="sub-summary">▸ {sub}</summary>
                           <ul className="item-list">
-                            {getItems(inventory, openPanel.loc, cat, sub, sub2).map((it, idx) => {
-                              const rowKey = `${openPanel.loc}|${cat}|${sub}/${sub2}|${it.name}|${idx}`;
+                            {getItems(inventory, openPanel.loc, cat, sub).map((it, idx) => {
+                              const rowKey = `${openPanel.loc}|${cat}|${sub}|${it.name}|${idx}`;
                               const open = editKey === rowKey;
                               return (
                                 <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
@@ -1336,36 +1155,16 @@ function Home({
                                       {isAdmin && (
                                         <>
                                           <div className="edit-toolbar">
-                                            <button
-                                              className="btn btn-ghost btn-compact"
-                                              onClick={() =>
-                                                handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1, sub2)
-                                              }
-                                            >
+                                            <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>
                                               ＋ 입고
                                             </button>
-                                            <button
-                                              className="btn btn-ghost btn-compact"
-                                              onClick={() =>
-                                                handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1, sub2)
-                                              }
-                                            >
+                                            <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>
                                               － 출고
                                             </button>
-                                            <button
-                                              className="btn btn-ghost btn-compact"
-                                              onClick={() =>
-                                                handleEditItemName(openPanel.loc, cat, sub, idx, sub2)
-                                              }
-                                            >
+                                            <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>
                                               ✎ 이름
                                             </button>
-                                            <button
-                                              className="btn btn-ghost btn-compact"
-                                              onClick={() =>
-                                                handleEditItemNote(openPanel.loc, cat, sub, idx, sub2)
-                                              }
-                                            >
+                                            <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>
                                               📝 메모
                                             </button>
                                           </div>
@@ -1395,20 +1194,141 @@ function Home({
                             })}
                           </ul>
                         </details>
-                      ))}
-                    </details>
-                  )
-                )
-              )}
-            </details>
-          ))
-        )}
-      </div>
-    </div>
-  </div>
-)}
+                      ))
+                    ) : (
+                      Object.entries(subs).map(([sub, subs2]) =>
+                        Array.isArray(subs2) ? (
+                          <details key={sub} open className="sub-details">
+                            <summary className="sub-summary">▸ {sub}</summary>
+                            <ul className="item-list">
+                              {getItems(inventory, openPanel.loc, cat, sub).map((it, idx) => {
+                                const rowKey = `${openPanel.loc}|${cat}|${sub}|${it.name}|${idx}`;
+                                const open = editKey === rowKey;
+                                return (
+                                  <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
+                                    <div className="item-text">
+                                      <span className="item-name">
+                                        <span className="item-title">{it.name}</span>
+                                        <span className="item-count">({it.count}개)</span>
+                                      </span>
 
-      {/* 전체 요약 (읽기 전용) — 기존과 동일 컨셉 */}
+                                      <div className="item-edit">
+                                        {isAdmin && (
+                                          <>
+                                            <div className="edit-toolbar">
+                                              <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>
+                                                ＋ 입고
+                                              </button>
+                                              <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>
+                                                － 출고
+                                              </button>
+                                              <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>
+                                                ✎ 이름
+                                              </button>
+                                              <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>
+                                                📝 메모
+                                              </button>
+                                            </div>
+                                            <div className="edit-note-preview">
+                                              {it.note ? `특이사항: ${it.note}` : "메모 없음"}
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
+
+                                      {it.note && <div className="item-note">특이사항: {it.note}</div>}
+                                    </div>
+
+                                    {isAdmin && (
+                                      <div className="item-actions">
+                                        <button
+                                          className="btn btn-secondary btn-compact"
+                                          onClick={() => setEditKey(open ? null : rowKey)}
+                                          title="이 아이템 수정"
+                                        >
+                                          {open ? "닫기" : "수정"}
+                                        </button>
+                                      </div>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </details>
+                        ) : (
+                          <details key={sub} open className="sub-details">
+                            <summary className="sub-summary">▸ {sub}</summary>
+                            {Object.keys(subs2).map((sub2) => (
+                              <details key={sub2} open className="sub-details">
+                                <summary className="sub-summary">▸ {sub2}</summary>
+                                <ul className="item-list">
+                                  {getItems(inventory, openPanel.loc, cat, sub, sub2).map((it, idx) => {
+                                    const rowKey = `${openPanel.loc}|${cat}|${sub}/${sub2}|${it.name}|${idx}`;
+                                    const open = editKey === rowKey;
+                                    return (
+                                      <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
+                                        <div className="item-text">
+                                          <span className="item-name">
+                                            <span className="item-title">{it.name}</span>
+                                            <span className="item-count">({it.count}개)</span>
+                                          </span>
+
+                                          <div className="item-edit">
+                                            {isAdmin && (
+                                              <>
+                                                <div className="edit-toolbar">
+                                                  <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1, sub2)}>
+                                                    ＋ 입고
+                                                  </button>
+                                                  <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1, sub2)}>
+                                                    － 출고
+                                                  </button>
+                                                  <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx, sub2)}>
+                                                    ✎ 이름
+                                                  </button>
+                                                  <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx, sub2)}>
+                                                    📝 메모
+                                                  </button>
+                                                </div>
+                                                <div className="edit-note-preview">
+                                                  {it.note ? `특이사항: ${it.note}` : "메모 없음"}
+                                                </div>
+                                              </>
+                                            )}
+                                          </div>
+
+                                          {it.note && <div className="item-note">특이사항: {it.note}</div>}
+                                        </div>
+
+                                        {isAdmin && (
+                                          <div className="item-actions">
+                                            <button
+                                              className="btn btn-secondary btn-compact"
+                                              onClick={() => setEditKey(open ? null : rowKey)}
+                                              title="이 아이템 수정"
+                                            >
+                                              {open ? "닫기" : "수정"}
+                                            </button>
+                                          </div>
+                                        )}
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </details>
+                            ))}
+                          </details>
+                        )
+                      )
+                    )}
+                  </details>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 전체 요약 (읽기 전용) */}
       <section className="grid">
         <div className="card glass hover-rise" ref={(el) => (cardRefs.current["summary"] = el)}>
           <div className="card-head" onClick={() => setOpenPanel({ kind: "summary" })}>
@@ -1511,8 +1431,9 @@ function Home({
           </div>
         </div>
       </section>
-           {/* 제작자 표시줄 추가 */}
-            <footer className="site-footer">
+
+      {/* 제작자 표시줄 */}
+      <footer className="site-footer">
         <p>
           © 강원도립대 드론융합과 24학번 최석민 — 드론축구단 재고·입출고 관리 콘솔<br />
           문의: <a href="mailto:gwdokkebinv@gmail.com">gwdokkebinv@gmail.com</a>
@@ -1523,7 +1444,7 @@ function Home({
 }
 
 /* =========================
-   5) 기록 페이지 (이전 개선본 그대로)
+   5) 기록 페이지
    ========================= */
 function LogsPage({ logs, setLogs }) {
   const [syncing, setSyncing] = useState(false);
@@ -1540,6 +1461,7 @@ function LogsPage({ logs, setLogs }) {
     const t = setTimeout(() => setSyncing(false), 700);
     return () => clearTimeout(t);
   }, [logs]);
+
   const sorted = useMemo(() => [...logs].sort((a, b) => new Date(b.ts) - new Date(a.ts)), [logs]);
 
   const filteredList = useMemo(() => {
@@ -1568,7 +1490,6 @@ function LogsPage({ logs, setLogs }) {
   function formatLabel(d) {
     const diff = Math.floor((new Date() - new Date(d)) / (1000 * 60 * 60 * 24));
     return diff === 0 ? "오늘" : diff === 1 ? "어제" : d;
-    // 필요 시 한국시간 고정 로직 추가 가능
   }
 
   function editReason(i) {
@@ -1583,8 +1504,23 @@ function LogsPage({ logs, setLogs }) {
   function deleteLog(i) {
     if (window.confirm("삭제하시겠습니까?")) {
       setLogs((prev) => prev.filter((_, j) => j !== i));
-      toast.success("로그 삭제됨");
-    }}
+      toast.success("로그 삭제됨 (실시간 동기화)");
+    }
+  }
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setExportOpen(false);
+    }
+    if (exportOpen) {
+      document.addEventListener("mousedown", onClickOutside);
+      document.addEventListener("touchstart", onClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("touchstart", onClickOutside);
+    };
+  }, [exportOpen]);
 
   function exportCSV() {
     const data = filteredList.map((l) => ({
@@ -1624,20 +1560,6 @@ function LogsPage({ logs, setLogs }) {
     XLSX.utils.book_append_sheet(wb, ws, "Logs");
     XLSX.writeFile(wb, "기록.xlsx");
   }
-
-  useEffect(() => {
-    function onClickOutside(e) {
-      if (menuRef.current && !menuRef.current.contains(e.target)) setExportOpen(false);
-    }
-    if (exportOpen) {
-      document.addEventListener("mousedown", onClickOutside);
-      document.addEventListener("touchstart", onClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", onClickOutside);
-      document.removeEventListener("touchstart", onClickOutside);
-    };
-  }, [exportOpen]);
 
   return (
     <main className="stage">
@@ -1703,58 +1625,58 @@ function LogsPage({ logs, setLogs }) {
             )}
           </div>
         </div>
-    </header>
+      </header>
 
-    {/* ▼ 동기화 인디케이터: 반드시 <main> 내부에 위치 */}
-    {syncing && (
-      <div className="sync-indicator">
-        <span className="spinner" /> 실시간 동기화…
-      </div>
-    )}
+      {/* 동기화 인디케이터 */}
+      {syncing && (
+        <div className="sync-indicator">
+          <span className="spinner" /> 실시간 동기화…
+        </div>
+      )}
 
-    {dates.length === 0 ? (
-      <section className="panel glass lift-in">
-        <p className="muted">기록이 없습니다.</p>
-      </section>
-    ) : (
-      dates.map((d) => (
-        <section key={d} className="panel glass lift-in">
-          <h2 className="panel-title">{formatLabel(d)}</h2>
-          <ul className="log-list">
-            {grouped[d].map((l, i) => {
-              const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
-              return (
-                <li key={i} className="log-row">
-                  <div className="log-text">
-                    <div className="log-line">
-                      <span className="time">[{l.time}]</span> {l.location} &gt; {l.category} &gt; {l.subcategory} /{" "}
-                      <strong>{l.item}</strong>
-                    </div>
-                    <div className={l.change > 0 ? "mark in" : "mark out"}>
-                      {l.change > 0 ? `입고 +${l.change}` : `출고 -${-l.change}`}
-                    </div>
-                    <div className="muted small">
-                      👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}
-                    </div>
-                    {l.reason && <div className="log-note">메모: {l.reason}</div>}
-                  </div>
-                  <div className="log-actions">
-                    <button className="btn btn-ghost" onClick={() => editReason(idx)}>
-                      {l.reason ? "메모 수정" : "메모 추가"}
-                    </button>
-                    <button className="btn btn-danger" onClick={() => deleteLog(idx)}>
-                      삭제
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+      {dates.length === 0 ? (
+        <section className="panel glass lift-in">
+          <p className="muted">기록이 없습니다.</p>
         </section>
-      ))
-    )}
-  </main>
-);
+      ) : (
+        dates.map((d) => (
+          <section key={d} className="panel glass lift-in">
+            <h2 className="panel-title">{formatLabel(d)}</h2>
+            <ul className="log-list">
+              {grouped[d].map((l, i) => {
+                const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
+                return (
+                  <li key={i} className="log-row">
+                    <div className="log-text">
+                      <div className="log-line">
+                        <span className="time">[{l.time}]</span> {l.location} &gt; {l.category} &gt; {l.subcategory} /{" "}
+                        <strong>{l.item}</strong>
+                      </div>
+                      <div className={l.change > 0 ? "mark in" : "mark out"}>
+                        {l.change > 0 ? `입고 +${l.change}` : `출고 -${-l.change}`}
+                      </div>
+                      <div className="muted small">
+                        👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}
+                      </div>
+                      {l.reason && <div className="log-note">메모: {l.reason}</div>}
+                    </div>
+                    <div className="log-actions">
+                      <button className="btn btn-ghost" onClick={() => editReason(idx)}>
+                        {l.reason ? "메모 수정" : "메모 추가"}
+                      </button>
+                      <button className="btn btn-danger" onClick={() => deleteLog(idx)}>
+                        삭제
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))
+      )}
+    </main>
+  );
 }
 
 /* =========================
@@ -1767,6 +1689,33 @@ export default function AppWrapper() {
   const isAdmin = getLocalAdmin();
   const [userId, setUserId] = useState(getLocalUserId);
   const [userName, setUserName] = useState(getLocalUserName);
+
+  // ⏱️ 10분 무활동 자동 로그아웃 
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    const LOGOUT_AFTER = 10 * 60 * 1000; // 10분
+    let timer;
+
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        saveLocalAdmin(false);
+        window.location.hash = "#/login";
+        window.location.reload();
+      }, LOGOUT_AFTER);
+    };
+
+    const events = ["mousemove", "keydown", "click", "touchstart", "scroll", "visibilitychange"];
+    events.forEach((t) => document.addEventListener(t, reset, { passive: true }));
+
+    reset(); // 초기 타이머 가동
+
+    return () => {
+      clearTimeout(timer);
+      events.forEach((t) => document.removeEventListener(t, reset));
+    };
+  }, [isAdmin]);
 
   return (
     <>
