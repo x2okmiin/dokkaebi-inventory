@@ -6,6 +6,7 @@ export default function LoginPage({ onLogin }) {
   const [uid, setUid] = useState("");
   const [name, setName] = useState("");
   const [show, setShow] = useState(false);
+  const [showHint, setShowHint] = useState(false);
 
   const submit = (e) => {
     e.preventDefault();
@@ -35,19 +36,20 @@ export default function LoginPage({ onLogin }) {
             <span className="dot dot-purple" />
             <span className="dot dot-blue" />
           </div>
-          <h1 className="brand-title">DOKKAEBI INVENTORY</h1>
-          <p className="brand-sub">드론축구단 재고·입출고 관리 콘솔</p>
+          <h1 className="brand-title">DOKKEBI INVENTORY</h1>
+          <b className="brand-sub">드론축구단 재고·입출고 관리 콘솔</b>
         </div>
+        
 
         <form onSubmit={submit} className="login-form">
-          <label className="login-label">ID (학번)</label>
+          <label className="login-label">학번</label>
           <div className="login-input-row login-input-row--nowrap">
             <input
               className="login-input login-input--flex"
               type="text"
               value={uid}
               onChange={(e) => setUid(e.target.value)}
-              placeholder="예: 202436029"
+              placeholder="예: 202036099"
               autoComplete="username"
               required
             />
@@ -60,7 +62,7 @@ export default function LoginPage({ onLogin }) {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="성함을 적어주세요"
+              placeholder="예: 홍길동"
               autoComplete="name"
               required
             />
@@ -78,6 +80,7 @@ export default function LoginPage({ onLogin }) {
               autoComplete="current-password"
               required
             />
+            
             <button
               type="button"
               className="btn btn-ghost login-eye-side"
@@ -88,7 +91,12 @@ export default function LoginPage({ onLogin }) {
               {show ? "🙈" : "👁️"}
             </button>
           </div>
-
+            <div
+              className={`brand-sub ${showHint ? "show" : ""}`}
+              onClick={() => setShowHint((v) => !v)}
+            >
+              {showHint ? "힌트: 동아리방 비밀번호" : "힌트 보기"}
+            </div>
           <button type="submit" className="btn btn-primary login-submit">
             🔑 로그인
           </button>

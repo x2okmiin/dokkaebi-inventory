@@ -137,6 +137,9 @@ function Home({
   const dataMenuRef = useRef(null);
   const [openPanel, setOpenPanel] = useState(null);
 
+  /* ▶ 편집 메뉴(“수정”) 열림 상태 — 아이템 단일 선택 */
+  const [editKey, setEditKey] = useState(null);
+
   const applyingCloudRef = useRef({ inv: false, logs: false });
 
   /* 쓰기(관리자), 로컬 저장 */
@@ -195,7 +198,7 @@ function Home({
     return () => clearTimeout(t);
   }, [inventory, logs]);
 
-  /* 외부 클릭 닫기 */
+  /* 외부 클릭 닫기 (데이터 메뉴) */
   useEffect(() => {
     function onClickOutside(e) {
       if (dataMenuRef.current && !dataMenuRef.current.contains(e.target)) setDataMenuOpen(false);
@@ -217,6 +220,24 @@ function Home({
     const el = cardRefs.current[key];
     if (el?.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [openPanel]);
+
+  /* 문서 바깥 클릭/ESC로 편집 메뉴 닫기 */
+  useEffect(() => {
+    if (!isAdmin) return;
+    const onDocClick = (e) => {
+      if (e.target.closest(".item-edit") || e.target.closest(".btn-compact")) return;
+      setEditKey(null);
+    };
+    const onEsc = (e) => { if (e.key === "Escape") setEditKey(null); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("touchstart", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("touchstart", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [isAdmin]);
 
   /* 내보내기 */
   function exportInventoryExcel() {
@@ -337,11 +358,10 @@ function Home({
     });
   }
 
-  /* === 변경됨: 카테고리 번호 선택 + '직접 입력한 품목명' & 중복 검사 === */
+  /* 추가(중복 검사 포함) */
   function handleAddNewItem(loc) {
     if (!isAdmin) return;
 
-    // 상위 카테고리 번호 선택
     const catKeys = Object.keys(subcategories);
     const catPick = prompt(
       "상위 카테고리 번호 선택:\n" + catKeys.map((c, i) => `${i + 1}. ${c}`).join("\n")
@@ -352,7 +372,6 @@ function Home({
     }
     const cat = catKeys[catIdx - 1];
 
-    // 하위 카테고리 번호 선택
     const subs = subcategories[cat] || [];
     if (subs.length === 0) return toast.error("해당 카테고리는 하위 카테고리가 없습니다.");
     const subPick = prompt(
@@ -364,26 +383,21 @@ function Home({
     }
     const sub = subs[subIdx - 1];
 
-    // 초기 수량
     const count = Number(prompt("초기 수량 입력:"));
     if (isNaN(count) || count < 0) return toast.error("수량이 올바르지 않습니다.");
 
-    // ⛔ 기존 while(true) 재입력 로직 삭제
-    // ✅ 단일 입력 + 중복이면 취소(리턴)
     const input = prompt("추가할 품목명을 입력하세요:");
-    if (!input) return; // 취소 또는 빈값 → 중단
+    if (!input) return;
     const name = input.trim();
 
-    // 중복 검사(세 장소 전체 cat/sub 범위)
     const existsAnywhere = locations.some((L) =>
       (inventory[L]?.[cat]?.[sub] || []).some((it) => (it.name || "") === name)
     );
     if (existsAnywhere) {
       toast.error("동일한 품목명이 존재합니다");
-      return; // 재입력 없이 즉시 종료
+      return;
     }
 
-    // 추가 (한 번만!)
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
       locations.forEach((L) => {
@@ -490,6 +504,10 @@ function Home({
     }, 80);
   }
 
+  /* 편집 메뉴 토글 */
+  const toggleEditMenu = (key) => setEditKey((prev) => (prev === key ? null : key));
+  const closeEditMenu = () => setEditKey(null);
+
   return (
     <main className="stage">
       {/* 로고 배경(유지) */}
@@ -504,7 +522,7 @@ function Home({
       {/* 상단 헤더 */}
       <header className="topbar glass">
         <h1 className="logo">
-          <span className="glow-dot" /> DOKKAEBI<span className="thin">/</span>INVENTORY
+          <span className="glow-dot" /> DOKKEBI<span className="thin">/</span>INVENTORY
         </h1>
 
         <div className="toolbar">
@@ -517,9 +535,9 @@ function Home({
             onFocus={() => {
               setTimeout(() => {
                 window.scrollTo({ top: 0, behavior: "smooth" });
-                }, 100);
+              }, 100);
             }}
-          />  
+          />
 
           <div className="menu-wrap" ref={dataMenuRef}>
             <button
@@ -648,7 +666,6 @@ function Home({
             <div className="card-body">
               {Object.entries(subcategories).map(([cat, subs]) => (
                 <details key={cat} ref={(el) => (categoryRefs.current[`${loc}-${cat}`] = el)}>
-                  {/* ✅ 이모지 적용 */}
                   <summary className="summary">{catIcon(cat)} {cat}</summary>
                   {subs.map((sub) => (
                     <details
@@ -658,46 +675,75 @@ function Home({
                     >
                       <summary className="sub-summary">▸ {sub}</summary>
                       <ul className="item-list">
-                        {(inventory[loc]?.[cat]?.[sub] || []).map((it, idx) => (
-                          <li
-                            key={idx}
-                            className="item-row"
-                            ref={(el) => {
-                              const refKey = `${loc}-${cat}-${sub}-${it.name}`;
-                              if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
-                            }}
-                          >
-                            <div className="item-text">
-                              <span className="item-name">
-                                {it.name}
-                                <span className="item-count">({it.count}개)</span>
-                              </span>
-                              {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                            </div>
-                            {isAdmin && (
-                              <div className="item-actions">
-                                <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>
-                                  ＋
-                                </button>
-                                <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>
-                                  －
-                                </button>
-                                <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(loc, cat, sub, idx)}>
-                                  ✎ 이름
-                                </button>
-                                <button
-                                  className="btn btn-ghost btn-compact"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleEditItemNote(loc, cat, sub, idx);
-                                  }}
-                                >
-                                  📝 메모
-                                </button>
+                        {(inventory[loc]?.[cat]?.[sub] || []).map((it, idx) => {
+                          const rowKey = `${loc}|${cat}|${sub}|${it.name}|${idx}`;
+                          const open = editKey === rowKey;
+                          return (
+                            <li
+                              key={idx}
+                              className={`item-row ${open ? "is-editing" : ""}`}
+                              ref={(el) => {
+                                const refKey = `${loc}-${cat}-${sub}-${it.name}`;
+                                if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
+                              }}
+                            >
+                              <div className="item-text">
+                                <span className="item-name">
+                                  <span className="item-title">{it.name}</span>
+                                  <span className="item-count">({it.count}개)</span>
+                                </span>
+                                <div className="item-edit">
+                                  {isAdmin && (
+                                    <>
+                                      <div className="edit-toolbar">
+                                        <button
+                                          className="btn btn-ghost btn-compact"
+                                          onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}
+                                        >
+                                          ＋ 입고
+                                        </button>
+                                        <button
+                                          className="btn btn-ghost btn-compact"
+                                          onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}
+                                        >
+                                          － 출고
+                                        </button>
+                                        <button
+                                          className="btn btn-ghost btn-compact"
+                                          onClick={() => handleEditItemName(loc, cat, sub, idx)}
+                                        >
+                                          ✎ 이름
+                                        </button>
+                                        <button
+                                          className="btn btn-ghost btn-compact"
+                                          onClick={() => handleEditItemNote(loc, cat, sub, idx)}
+                                        >
+                                          📝 메모
+                                        </button>
+                                      </div>
+                                      <div className="edit-note-preview">
+                                        {it.note ? `특이사항: ${it.note}` : "메모 없음"}
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                                {it.note && <div className="item-note">특이사항: {it.note}</div>}
                               </div>
-                            )}
-                          </li>
-                        ))}
+
+                              {isAdmin && (
+                                <div className="item-actions">
+                                  <button
+                                    className="btn btn-secondary btn-compact"
+                                    onClick={() => toggleEditMenu(rowKey)}
+                                    title="이 아이템 수정"
+                                  >
+                                    {open ? "닫기" : "수정"}
+                                  </button>
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </details>
                   ))}
@@ -708,7 +754,7 @@ function Home({
         ))}
       </section>
 
-      {/* 전체 요약 */}
+      {/* 전체 요약 (읽기 전용) */}
       <section className="grid">
         <div className="card glass hover-rise" ref={(el) => (cardRefs.current["summary"] = el)}>
           <div className="card-head" onClick={() => setOpenPanel({ kind: "summary" })}>
@@ -729,7 +775,6 @@ function Home({
           <div className="card-body">
             {Object.entries(subcategories).map(([cat, subs]) => (
               <details key={cat} ref={(el) => (categoryRefs.current[`전체-${cat}`] = el)}>
-                {/* ✅ 요약 카드에도 이모지 적용 */}
                 <summary className="summary">{catIcon(cat)} {cat}</summary>
                 {subs.map((sub) => (
                   <details key={sub} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
@@ -746,7 +791,8 @@ function Home({
                         <li key={name} className="item-row">
                           <div className="item-text">
                             <span className="item-name">
-                              {name} <span className="item-count">({count}개)</span>
+                              <span className="item-title">{name}</span>
+                              <span className="item-count">({count}개)</span>
                             </span>
                           </div>
                         </li>
@@ -777,7 +823,6 @@ function Home({
               {openPanel.kind === "summary" ? (
                 Object.entries(subcategories).map(([cat, subs]) => (
                   <details key={cat} open>
-                    {/* ✅ 팝업(요약)에도 적용 */}
                     <summary className="summary">{catIcon(cat)} {cat}</summary>
                     {subs.map((sub) => (
                       <details key={sub} open className="sub-details">
@@ -794,7 +839,8 @@ function Home({
                             <li key={name} className="item-row">
                               <div className="item-text">
                                 <span className="item-name">
-                                  {name} <span className="item-count">({count}개)</span>
+                                  <span className="item-title">{name}</span>
+                                  <span className="item-count">({count}개)</span>
                                 </span>
                               </div>
                             </li>
@@ -807,38 +853,73 @@ function Home({
               ) : (
                 Object.entries(subcategories).map(([cat, subs]) => (
                   <details key={cat} open>
-                    {/* ✅ 팝업(장소별)에도 적용 */}
                     <summary className="summary">{catIcon(cat)} {cat}</summary>
                     {subs.map((sub) => (
                       <details key={sub} open className="sub-details">
                         <summary className="sub-summary">▸ {sub}</summary>
                         <ul className="item-list">
-                          {(inventory[openPanel.loc]?.[cat]?.[sub] || []).map((it, idx) => (
-                            <li key={idx} className="item-row">
-                              <div className="item-text">
-                                <span className="item-name">
-                                  {it.name} <span className="item-count">({it.count}개)</span>
-                                </span>
-                                {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                              </div>
-                              {isAdmin && (
-                                <div className="item-actions">
-                                  <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>
-                                    ＋
-                                  </button>
-                                  <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>
-                                    －
-                                  </button>
-                                  <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>
-                                    ✎ 이름
-                                  </button>
-                                  <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>
-                                    📝 메모
-                                  </button>
+                          {(inventory[openPanel.loc]?.[cat]?.[sub] || []).map((it, idx) => {
+                            const rowKey = `${openPanel.loc}|${cat}|${sub}|${idx}`;
+                            const open = editKey === rowKey;
+                            return (
+                              <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
+                                <div className="item-text">
+                                  <span className="item-name">
+                                    <span className="item-title">{it.name}</span>
+                                    <span className="item-count">({it.count}개)</span>
+                                  </span>
+                                  <div className="item-edit">
+                                    {isAdmin && (
+                                      <>
+                                        <div className="edit-toolbar">
+                                          <button
+                                            className="btn btn-ghost btn-compact"
+                                            onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}
+                                          >
+                                            ＋ 입고
+                                          </button>
+                                          <button
+                                            className="btn btn-ghost btn-compact"
+                                            onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}
+                                          >
+                                            － 출고
+                                          </button>
+                                          <button
+                                            className="btn btn-ghost btn-compact"
+                                            onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}
+                                          >
+                                            ✎ 이름
+                                          </button>
+                                          <button
+                                            className="btn btn-ghost btn-compact"
+                                            onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}
+                                          >
+                                            📝 메모
+                                          </button>
+                                        </div>
+                                        <div className="edit-note-preview">
+                                          {it.note ? `특이사항: ${it.note}` : "메모 없음"}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                  {it.note && <div className="item-note">특이사항: {it.note}</div>}
                                 </div>
-                              )}
-                            </li>
-                          ))}
+
+                                {isAdmin && (
+                                  <div className="item-actions">
+                                    <button
+                                      className="btn btn-secondary btn-compact"
+                                      onClick={() => toggleEditMenu(rowKey)}
+                                      title="이 아이템 수정"
+                                    >
+                                      {open ? "닫기" : "수정"}
+                                    </button>
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
                         </ul>
                       </details>
                     ))}
@@ -849,21 +930,40 @@ function Home({
           </div>
         </div>
       )}
+      <footer className="site-footer">
+        <p>
+          © 강원도립대 드론융합과 24학번 최석민 — 도깨비 드론축구단 재고·입출고 관리 콘솔<br />
+          문의: <a href="mailto:gwdokkebinv@gmail.com">gwdokkebinv@gmail.com</a>
+        </p>
+      </footer>
     </main>
   );
 }
 
-/* LogsPage (변경 없음) */
+/* LogsPage — 품목 검색 + 장소 선택 필터 추가 */
 function LogsPage({ logs, setLogs }) {
   const navigate = useNavigate();
   const [filterDate, setFilterDate] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
+  const [itemKeyword, setItemKeyword] = useState("");
+  const [locationFilter, setLocationFilter] = useState(""); // "" = 전체
   const menuRef = useRef(null);
 
   useEffect(() => saveLocalLogs(logs), [logs]);
 
   const sorted = useMemo(() => [...logs].sort((a, b) => new Date(b.ts) - new Date(a.ts)), [logs]);
-  const filteredList = filterDate ? sorted.filter((l) => l.ts.slice(0, 10) === filterDate) : sorted;
+
+  /* 날짜 + 장소 + 품목명 필터를 모두 적용 */
+  const filteredList = useMemo(() => {
+    let list = sorted;
+    if (filterDate) list = list.filter((l) => l.ts.slice(0, 10) === filterDate);
+    if (locationFilter) list = list.filter((l) => l.location === locationFilter);
+    if (itemKeyword.trim()) {
+      const q = itemKeyword.trim().toLowerCase();
+      list = list.filter((l) => (l.item || "").toLowerCase().includes(q));
+    }
+    return list;
+  }, [sorted, filterDate, locationFilter, itemKeyword]);
 
   const grouped = useMemo(
     () =>
@@ -895,7 +995,7 @@ function LogsPage({ logs, setLogs }) {
   }
 
   function exportCSV() {
-    const data = sorted.map((l) => ({
+    const data = filteredList.map((l) => ({
       시간: l.time,
       ID: l.operatorId || "",
       이름: l.operatorName || "",
@@ -916,7 +1016,7 @@ function LogsPage({ logs, setLogs }) {
   }
 
   function exportExcel() {
-    const data = sorted.map((l) => ({
+    const data = filteredList.map((l) => ({
       시간: l.time,
       ID: l.operatorId || "",
       이름: l.operatorName || "",
@@ -933,6 +1033,7 @@ function LogsPage({ logs, setLogs }) {
     XLSX.writeFile(wb, "기록.xlsx");
   }
 
+  /* 내보내기 메뉴 외부 클릭 닫기 */
   useEffect(() => {
     function onClickOutside(e) {
       if (menuRef.current && !menuRef.current.contains(e.target)) setExportOpen(false);
@@ -960,16 +1061,48 @@ function LogsPage({ logs, setLogs }) {
         <button className="btn btn-ghost" onClick={() => navigate("/")}>
           ← 돌아가기
         </button>
-        <h1 className="logo">입출고 기록</h1>
+        <h1 className="logo">📘입출고 기록</h1>
 
+        {/* ✅ 툴바: 폰/태블릿에선 타이틀 아래로 자동 줄바꿈됨 */}
         <div className="toolbar">
+          {/* 품목 검색 */}
+          <input
+            className="search-input"
+            type="text"
+            value={itemKeyword}
+            onChange={(e) => setItemKeyword(e.target.value)}
+            placeholder="품목 검색 (부분 일치)"
+          />
+
+          {/* 장소 선택 */}
+          <select
+            className="search-input"
+            value={locationFilter}
+            onChange={(e) => setLocationFilter(e.target.value)}
+            aria-label="장소 필터"
+          >
+            <option value="">전체 장소</option>
+            {locations.map((L) => (
+              <option key={L} value={L}>{L}</option>
+            ))}
+          </select>
+
+          {/* 날짜 선택 */}
           <input
             type="date"
             value={filterDate}
             onChange={(e) => setFilterDate(e.target.value)}
             className="search-input"
           />
-          <button className="btn btn-secondary" onClick={() => setFilterDate("")}>
+
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              setFilterDate("");
+              setItemKeyword("");
+              setLocationFilter("");
+            }}
+          >
             필터 해제
           </button>
 
