@@ -1498,13 +1498,13 @@ function LogsPage({ logs, setLogs }) {
     const arr = [...logs];
     arr[i].reason = note;
     setLogs(arr);
-    toast.success("메모 저장됨 (실시간 동기화)");
+    toast.success("메모 저장됨");
   }
 
   function deleteLog(i) {
     if (window.confirm("삭제하시겠습니까?")) {
       setLogs((prev) => prev.filter((_, j) => j !== i));
-      toast.success("로그 삭제됨 (실시간 동기화)");
+      toast.success("로그 삭제됨");
     }
   }
 
