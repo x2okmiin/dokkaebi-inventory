@@ -274,6 +274,34 @@ details[open] > .sub-summary::after{
   text-shadow:0 0 6px var(--purple), 0 0 12px var(--purple);
 }
 
+/* ======= 최하위(3단계) 카테고리 화살표 ======= */
+/* 구조: .sub-details(2단계) 안의 .sub-details(3단계) > .sub-summary */
+.sub-details .sub-details > .sub-summary{
+  position: relative;
+  padding-left: 22px;            /* 2단계(28px)보다 살짝 덜 들여쓰기 */
+  font-size: .98em;
+  opacity: .95;
+}
+/* 3단계는 좌측 네온 바 제거(지저분함 방지) */
+.sub-details .sub-details > .sub-summary::before{ display:none; }
+
+/* 3단계 화살표(닫힘 ▶ / 열림 ▼ 회전) */
+.sub-details .sub-details > .sub-summary::after{
+  content:"▶";
+  position:absolute; left:4px; top:50%;
+  transform:translateY(-50%) rotate(0deg);
+  font-size:11px;                 /* 2단계(12px)보다 작게 */
+  color:var(--purple);
+  text-shadow:0 0 5px rgba(136,167,255,.35), 0 0 10px rgba(136,167,255,.25);
+  transition:transform .22s ease, color .22s ease, text-shadow .22s ease;
+}
+.sub-details .sub-details[open] > .sub-summary::after{
+  transform:translateY(-50%) rotate(90deg);
+  color:rgb(43, 128, 255);
+  text-shadow:0 0 6px rgba(43, 128, 255, 0.377), 0 0 12px rgba(43, 128, 255, 0.651);
+}
+
+
 /* ========== 7) 아이템 리스트(핵심 레이아웃) ========== */
 /* 구조
    1행: [name]   [actions]
@@ -319,7 +347,7 @@ details[open] > .sub-summary::after{
   background:rgba(147,167,210,.10); border:1px solid rgba(147,167,210,.22);
   border-radius:10px; padding:6px 8px;
   width:100%; max-width:100%; box-sizing:border-box;
-  overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; /* 2줄 제한 */
+  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; line-clamp: 2; -webkit-line-clamp:2; /* 2줄 제한 */
 }
 
 /* 우측 액션: “수정” 트리거만 노출 */
