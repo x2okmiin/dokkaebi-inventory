@@ -516,28 +516,45 @@ function Home({
   }
 
   /* 전체 삭제(이름으로) */
-  function handleDeleteItem() {
-    if (!isAdmin) return;
-    const name = prompt("삭제할 품목 이름을 입력하세요:");
-    if (!name) return;
+/* 전체 삭제(이름으로) — 경로 상세 토스트 포함 */
+function handleDeleteItem() {
+  if (!isAdmin) return;
+  const name = prompt("삭제할 품목 이름을 입력하세요:");
+  if (!name) return;
 
-    let totalCount = 0;
-    locations.forEach((L) => {
-      Object.keys(inventory[L] || {}).forEach((cat) => {
-        Object.keys(inventory[L][cat] || {}).forEach((sub) => {
-          const node = inventory[L][cat][sub];
-          if (Array.isArray(node)) {
-            node.forEach((item) => { if (item.name === name) totalCount += item.count || 0; });
-          } else if (node && typeof node === "object") {
-            Object.values(node).forEach((arr) => {
-              (arr || []).forEach((item) => { if (item.name === name) totalCount += item.count || 0; });
+  // 1) 어디에서(장소/카테고리/하위/최하위) 몇 개 있었는지 먼저 수집
+  const foundDetails = [];
+  let totalCount = 0;
+
+  locations.forEach((L) => {
+    Object.keys(inventory[L] || {}).forEach((cat) => {
+      Object.keys(inventory[L][cat] || {}).forEach((sub) => {
+        const node = inventory[L][cat][sub];
+
+        if (Array.isArray(node)) {
+          node.forEach((item) => {
+            if (item.name === name) {
+              const c = item.count || 0;
+              totalCount += c;
+              foundDetails.push({ L, cat, sub, sub2: null, count: c });
+            }
+          });
+        } else if (node && typeof node === "object") {
+          Object.keys(node).forEach((sub2) => {
+            (node[sub2] || []).forEach((item) => {
+              if (item.name === name) {
+                const c = item.count || 0;
+                totalCount += c;
+                foundDetails.push({ L, cat, sub, sub2, count: c });
+              }
             });
-          }
-        });
+          });
+        }
       });
     });
+  });
     if (totalCount === 0) return toast.error("해당 품목이 존재하지 않습니다.");
-
+  // 2) 실제 삭제
     setInventory((prev) => {
       const newInv = JSON.parse(JSON.stringify(prev));
       locations.forEach((L) => {
@@ -556,7 +573,7 @@ function Home({
       });
       return newInv;
     });
-
+  // 3) 로그 기록
     const now = new Date(), ts = now.toISOString(), time = now.toLocaleString();
     setLogs((prev) => [
       {
@@ -574,33 +591,97 @@ function Home({
       },
       ...prev,
     ]);
-  }
+  // 4) 경로 상세 토스트
+  // 0개인 경로는 보통 안 보고 싶으니 >0만 노출
+  const nonZero = foundDetails.filter((f) => f.count > 0);
+  const lines = nonZero
+    .slice(0, 8) // 너무 길어지면 8줄까지만 보여주고…
+    .map(
+      ({ L, cat, sub, sub2, count }) =>
+        `• ${L} > ${cat} > ${sub}${sub2 ? " > " + sub2 : ""} : ${count}개`
+    )
+    .join("\n");
+  const more =
+    nonZero.length > 8 ? `\n외 ${nonZero.length - 8}개 경로…` : "";
 
-  /* ===== 검색/집계: 3단계 대응 ===== */
-  const filtered = useMemo(() => {
-    const out = [];
-    Object.entries(inventory).forEach(([loc, cats]) => {
-      Object.entries(cats || {}).forEach(([cat, subs]) => {
-        if (Array.isArray(subs)) return;
+  toast.success(
+    `삭제됨: ${name}\n총 ${totalCount}개\n\n${lines}${more}`,
+    { style: { whiteSpace: "pre-line" } }
+  );
+
+  // (옵션) 경로 클립보드 복사까지 원하면 아래 주석 해제
+  // navigator.clipboard.writeText(
+  //   [`[삭제] ${name} (총 ${totalCount}개)`, ...nonZero.map(
+  //     ({ L, cat, sub, sub2, count }) =>
+  //       `${L} > ${cat} > ${sub}${sub2 ? " > " + sub2 : ""} : ${count}개`
+  //   )].join("\n")
+  // ).then(() => toast("경로 복사됨"));
+  }
+  
+
+/* ===== 검색/집계: 3단계 대응 — 품목명 + 하위/최하위 검색 ===== */
+const filtered = useMemo(() => {
+  const q = (searchTerm || "").trim().toLowerCase();
+  if (!q) return [];
+
+  const out = [];
+  Object.entries(inventory).forEach(([loc, cats]) => {
+    Object.entries(cats || {}).forEach(([cat, subs]) => {
+
+      if (Array.isArray(subs)) {
+        // 🔹 상위→하위(배열) 구조
+        subs.forEach((sub) => {
+          const subL = (sub || "").toLowerCase();
+          (getItems(inventory, loc, cat, sub) || []).forEach((i) => {
+            const nameL = (i.name || "").toLowerCase();
+            if (
+              nameL.includes(q) ||
+              subL.includes(q)
+              // || catL.includes(q)  // ← 상위까지 검색 원하면 주석 해제
+            ) {
+              out.push({ loc, cat, sub, sub2: null, ...i });
+            }
+          });
+        });
+      } else {
+        // 🔹 상위→하위(객체) → 최하위(배열/객체)
         Object.entries(subs || {}).forEach(([sub, node]) => {
+          const subL = (sub || "").toLowerCase();
+
           if (Array.isArray(node)) {
             (node || []).forEach((i) => {
-              if (i.name.toLowerCase().includes((searchTerm || "").toLowerCase()))
+              const nameL = (i.name || "").toLowerCase();
+              if (
+                nameL.includes(q) ||
+                subL.includes(q)
+                // || catL.includes(q)
+              ) {
                 out.push({ loc, cat, sub, sub2: null, ...i });
+              }
             });
           } else if (node && typeof node === "object") {
             Object.entries(node).forEach(([sub2, arr]) => {
+              const sub2L = (sub2 || "").toLowerCase();
               (arr || []).forEach((i) => {
-                if (i.name.toLowerCase().includes((searchTerm || "").toLowerCase()))
+                const nameL = (i.name || "").toLowerCase();
+                if (
+                  nameL.includes(q) ||
+                  subL.includes(q) ||
+                  sub2L.includes(q)
+                  // || catL.includes(q)
+                ) {
                   out.push({ loc, cat, sub, sub2, ...i });
+                }
               });
             });
           }
         });
-      });
+      }
     });
-    return out;
-  }, [inventory, searchTerm]);
+  });
+  return out;
+}, [inventory, searchTerm]);
+
 
   const aggregated = useMemo(() => {
     const map = {};
@@ -656,7 +737,7 @@ function Home({
           <input
             className="search-input"
             type="text"
-            placeholder="검색: 품목명 입력…"
+            placeholder="검색: 품목/하위/최하위…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             onFocus={() => setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 100)}
@@ -1573,7 +1654,7 @@ function LogsPage({ logs, setLogs }) {
         <button className="btn btn-ghost" onClick={() => navigate("/")}>
           ← 돌아가기
         </button>
-        <h1 className="logo">입출고 기록</h1>
+        <h1 className="logo">📘입출고 기록</h1>
 
         {/* 폰/태블릿에선 타이틀 아래로 풀폭 정렬 */}
         <div className="toolbar">
@@ -1614,7 +1695,7 @@ function LogsPage({ logs, setLogs }) {
               ⬇ 내보내기
             </button>
             {exportOpen && (
-              <div className="menu" role="menu">
+              <div className="menu menu-logs" role="menu">
                 <button className="menu-item" onClick={() => { exportCSV(); setExportOpen(false); }}>
                   📄 CSV 내보내기
                 </button>

@@ -551,3 +551,27 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
 .site-footer a:hover {
   text-decoration: underline;
 }
+/* LogsPage 전용 드롭다운 */
+.topbar .toolbar .menu-wrap { position: relative; }
+
+.topbar .toolbar .menu.menu-logs {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;                  /* 👉 데스크탑: 버튼의 오른쪽 끝에 맞춤 */
+  min-width: 220px;
+  max-width: 360px;
+  padding: 8px;
+  border-radius: 12px;
+  transform-origin: top right;
+  animation: menuDropLogs .18s ease-out;
+}
+
+/* 모바일/태블릿: 화면 밖으로 나가지 않게 중앙 정렬 */
+@media (max-width: 960px) {
+  .topbar .toolbar .menu.menu-logs {
+    left: auto;
+    right: auto;
+    transform: translateX(-50%);
+    max-width: min(92vw, 420px);
+  }
+}
