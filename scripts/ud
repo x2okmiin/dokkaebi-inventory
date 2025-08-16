@@ -23,15 +23,18 @@ if [[ ! "$VER" =~ ^[0-9]+(\.[0-9]+){1,2}(-[0-9A-Za-z.-]+)?$ ]]; then
 fi
 
 TAG="v$VER"
-MSG="${2:-"(pre-release): $TAG"}"   # 인자 2 = 커밋 메시지(옵션)
+MSG="${2:-"(release): $TAG"}"   # 인자 2 = 커밋 메시지(옵션)
 
 # 3) 기존 태그 중복 체크(로컬/원격)
 git fetch --tags --quiet || true
 if git tag -l | grep -qx "$TAG"; then
   echo "⛔ 이미 진행한 업데이트 버전입니다. ($TAG)"; exit 1
 fi
+# 4) package.json 버전 반영 (+ 앱에서 표시하고 싶으면 .env.local도 갱신)
+npm pkg set version="$VER"
+printf "REACT_APP_VERSION=%s\n" "$VER" > .env.local
 
-# 4) add/commit (변경 없으면 건너뜀)
+# 5) add/commit (변경 없으면 건너뜀)
 echo "▶ Git add & commit…"
 git add -A
 if git diff --cached --quiet; then
@@ -40,7 +43,7 @@ else
   git commit -m "$MSG"
 fi
 
-# 5) 태그 & push
+# 6) 태그 & push
 echo "▶ 태그 생성: $TAG"
 git tag -a "$TAG" -m "$TAG"
 
@@ -48,11 +51,11 @@ echo "▶ push…"
 git push origin main
 git push origin "$TAG"
 
-# 6) 빌드 (실패 시 중단)
+# 7) 빌드 (실패 시 중단)
 echo "▶ 빌드…"
 npm run build
 
-# 7) 배포 (package.json의 deploy 실행)
+# 8) 배포 (package.json의 deploy 실행)
 echo "▶ 배포…"
 npm run deploy
 

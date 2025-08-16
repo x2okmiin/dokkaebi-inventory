@@ -1,12 +1,13 @@
 {
     "name": "dokkaebi-inventory",
-    "version": "0.1.0",
+    "version": "3.0-scriptsTEST",
     "private": true,
     "homepage": "https://x2okmiin.github.io/dokkaebi-inventory",
     "dependencies": {
         "@testing-library/dom": "^10.4.1",
         "@testing-library/user-event": "^13.5.0",
         "firebase": "^12.1.0",
+        "gh-pages": "^6.3.0",
         "react": "^19.1.1",
         "react-dom": "^19.1.1",
         "react-hot-toast": "^2.5.2",
@@ -22,7 +23,9 @@
         "eject": "react-scripts eject",
         "predeploy": "npm run build",
         "deploy": "gh-pages -d build",
-        "ud": "bash ./scripts/ud"
+        "ud": "bash ./scripts/ud",
+        "version": "npm run build && npm run deploy",
+        "postversion": "git push && git push --tags"
     },
     "eslintConfig": {
         "extends": [
@@ -45,7 +48,6 @@
     "devDependencies": {
         "@testing-library/jest-dom": "^6.6.4",
         "@testing-library/react": "^16.3.0",
-        "gh-pages": "^6.3.0",
         "jest": "^27.5.1"
     }
 }
