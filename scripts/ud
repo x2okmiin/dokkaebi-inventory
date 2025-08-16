@@ -10,7 +10,7 @@ echo "▶ 배포 시작…"
 # 1) 버전 입력/정규화
 VER="${1:-}"                      # 인자 1 = 버전 (0.1.3 또는 v0.1.3)
 if [[ -z "$VER" ]]; then
-  read -rp "버전 (예: 0.1.3 또는 v0.1.3): " VER
+  read -rp "버전 (예: 예: 0.1.3 또는 0.1.3-beta.1): " VER
 fi
 VER="${VER#v}"                    # 사용자가 v 접두사 넣어도 제거
 if [[ -z "$VER" ]]; then
@@ -23,7 +23,7 @@ if [[ ! "$VER" =~ ^[0-9]+(\.[0-9]+){1,2}(-[0-9A-Za-z.-]+)?$ ]]; then
 fi
 
 TAG="v$VER"
-MSG="${2:-"chore(release): $TAG"}"   # 인자 2 = 커밋 메시지(옵션)
+MSG="${2:-"(pre-release): $TAG"}"   # 인자 2 = 커밋 메시지(옵션)
 
 # 3) 기존 태그 중복 체크(로컬/원격)
 git fetch --tags --quiet || true
