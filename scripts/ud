@@ -62,7 +62,7 @@ echo "▶ 배포…"
 # 배포 과정에서 다시 빌드가 돌 수 있으므로 아래처럼도 안전함:
 REACT_APP_VERSION="$VER" npm run deploy
 
-echo "✅ 업데이트가 완료되었습니다!
+echo "✅ 업데이트가 완료되었습니다!"
 
 
 # 실행: npm run ud
