@@ -1,4 +1,15 @@
 // src/App.js
+
+/* ==========================================================================
+   App.css 연동 및 파일 구성 안내
+   작성 가이드:
+   - 본 파일은 홈(재고) + 기록 페이지 + 실시간 동기화 래퍼를 포함한 단일 App.js입니다.
+   - “전체” 카드는 장소 카드 그리드 내부에 포함되어 2열 이상에서 2×2 배열이 되도록 합니다.
+   - Firebase RTDB: inventory는 set 전체 저장, logs는 push/update/remove만.
+   - 섹션별 주석을 유지해 가독성과 회귀 테스트를 용이하게 합니다.
+   ========================================================================== */
+
+// src/App.js — 통합본 (수정/프롬프트 정상, 2×2 유지, ≥1100px에서 "전체" 중앙)
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { HashRouter as Router, Routes, Route, useNavigate, Navigate } from "react-router-dom";
 import * as XLSX from "xlsx";
@@ -52,6 +63,7 @@ function getLocalInventory() {
   const d = localStorage.getItem("do-kkae-bi-inventory");
   if (d) return JSON.parse(d);
 
+  // 최초 기동 시 스키마 템플릿 생성
   const base = {};
   locations.forEach((loc) => {
     base[loc] = {};
@@ -96,7 +108,9 @@ function getLocalUserName() {
   return localStorage.getItem("do-kkae-bi-user-name") || "";
 }
 
-/* 고정 배경 */
+/* =========================
+   3) 고정 배경 / 네온
+   ========================= */
 function FixedBg({
   src,
   overlay = null,
@@ -120,8 +134,6 @@ function FixedBg({
     </>
   );
 }
-
-/* 네온 백드롭 */
 function NeonBackdrop() {
   return (
     <>
@@ -132,9 +144,8 @@ function NeonBackdrop() {
 }
 
 /* =========================
-   3) 공용 유틸
+   4) 공용 유틸
    ========================= */
-// RTDB logs 값을 id포함 배열로 정규화
 function normalizeLogsVal(val) {
   if (!val) return [];
   if (Array.isArray(val)) {
@@ -149,7 +160,6 @@ function normalizeLogsVal(val) {
   }
   return [];
 }
-
 function getItems(inv, loc, cat, sub, sub2) {
   const node = (((inv || {})[loc] || {})[cat] || {})[sub];
   if (!node) return [];
@@ -171,7 +181,7 @@ function ensureItems(inv, loc, cat, sub, sub2) {
 const subPath = (sub, sub2) => (sub2 ? `${sub}/${sub2}` : sub);
 
 /* =========================
-   4) 홈 화면
+   5) 홈(재고) 화면
    ========================= */
 function Home({
   inventory,
@@ -180,7 +190,7 @@ function Home({
   setSearchTerm,
   logs,
   setLogs,
-  isAdmin,     // 남겨두지만 권한 가드는 사용하지 않음
+  isAdmin,
   userId,
   userName,
 }) {
@@ -194,12 +204,14 @@ function Home({
   const [openPanel, setOpenPanel] = useState(null);
   const [editKey, setEditKey] = useState(null);
 
+  // 동기화 인디케이터
   useEffect(() => {
     setSyncing(true);
     const t = setTimeout(() => setSyncing(false), 700);
     return () => clearTimeout(t);
   }, [inventory, logs]);
 
+  // 데이터 메뉴 외부 클릭 닫기
   useEffect(() => {
     function onClickOutside(e) {
       if (dataMenuRef.current && !dataMenuRef.current.contains(e.target)) setDataMenuOpen(false);
@@ -214,6 +226,7 @@ function Home({
     };
   }, [dataMenuOpen]);
 
+  // 팝업 열릴 때 해당 카드 위치로 스크롤
   useEffect(() => {
     if (!openPanel) return;
     const key = openPanel.kind === "summary" ? "summary" : openPanel.loc;
@@ -221,9 +234,10 @@ function Home({
     if (el?.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [openPanel]);
 
+  // 수정 패널 바깥 클릭/ESC 닫기 (버튼과 에디트 내부는 예외)
   useEffect(() => {
     const onDocClick = (e) => {
-      if (e.target.closest(".item-edit") || e.target.closest(".btn-compact")) return;
+      if (e.target.closest(".item-edit") || e.target.closest(".btn-compact") || e.target.closest(".item-actions")) return;
       setEditKey(null);
     };
     const onEsc = (e) => { if (e.key === "Escape") setEditKey(null); };
@@ -237,6 +251,7 @@ function Home({
     };
   }, []);
 
+  /* ===== 내보내기 ===== */
   function exportInventoryExcel() {
     const rows = [];
     const itemTotals = {};
@@ -264,11 +279,7 @@ function Home({
               Object.keys(subs2).forEach((sub2) => {
                 (getItems(inventory, loc, cat, sub, sub2) || []).forEach((item) => {
                   rows.push({
-                    장소: loc,
-                    상위카테고리: cat,
-                    하위카테고리: `${sub}/${sub2}`,
-                    품목명: item.name,
-                    수량: item.count,
+                    장소: loc, 상위카테고리: cat, 하위카테고리: `${sub}/${sub2}`, 품목명: item.name, 수량: item.count,
                   });
                   if (!itemTotals[item.name]) itemTotals[item.name] = { 합계: 0, 장소별: {} };
                   itemTotals[item.name].합계 += item.count;
@@ -300,7 +311,7 @@ function Home({
     XLSX.writeFile(wb, "재고현황.xlsx");
   }
 
-  /* 수량 증감 (모두 가능) */
+  /* ===== 수량 증감 ===== */
   function handleUpdateItemCount(loc, cat, sub, idx, delta, sub2) {
     if (delta === 0) return;
 
@@ -322,9 +333,7 @@ function Home({
     const dir = delta > 0 ? "IN" : "OUT";
     const mergeKey = `${loc}|${cat}|${subKey}|${itemName}|${dir}`;
 
-    const mergeIdx = logs.findIndex(
-      (l) => l.key === mergeKey && now - new Date(l.ts) < 60 * 60 * 1000
-    );
+    const mergeIdx = logs.findIndex((l) => l.key === mergeKey && now - new Date(l.ts) < 60 * 60 * 1000);
 
     if (mergeIdx > -1) {
       const target = logs[mergeIdx];
@@ -365,6 +374,7 @@ function Home({
     }
   }
 
+  /* ===== 이름/메모 편집 ===== */
   function handleEditItemName(loc, cat, sub, idx, sub2) {
     const list = getItems(inventory, loc, cat, sub, sub2);
     const oldName = list[idx]?.name;
@@ -376,12 +386,13 @@ function Home({
       const inv = JSON.parse(JSON.stringify(prev));
       locations.forEach((L) => {
         const arr = ensureItems(inv, L, cat, sub, sub2);
-        arr.forEach((it) => { if (it.name === oldName) it.name = newName; });
+        arr.forEach((it) => {
+          if (it.name === oldName) it.name = newName;
+        });
       });
       return inv;
     });
   }
-
   function handleEditItemNote(loc, cat, sub, idx, sub2) {
     setInventory((prev) => {
       const inv = JSON.parse(JSON.stringify(prev));
@@ -394,11 +405,10 @@ function Home({
     });
   }
 
+  /* ===== 품목 추가 ===== */
   function handleAddNewItem(loc) {
     const catKeys = Object.keys(subcategories);
-    const catPick = prompt(
-      "상위 카테고리 번호 선택:\n" + catKeys.map((c, i) => `${i + 1}. ${c}`).join("\n")
-    );
+    const catPick = prompt("상위 카테고리 번호 선택:\n" + catKeys.map((c, i) => `${i + 1}. ${c}`).join("\n"));
     const catIdx = Number(catPick);
     if (!Number.isInteger(catIdx) || catIdx < 1 || catIdx > catKeys.length) return toast.error("올바른 번호가 아닙니다.");
     const cat = catKeys[catIdx - 1];
@@ -406,9 +416,7 @@ function Home({
     const subs = subcategories[cat];
     const subList = Array.isArray(subs) ? subs : Object.keys(subs);
     if (subList.length === 0) return toast.error("해당 카테고리는 하위 카테고리가 없습니다.");
-    const subPick = prompt(
-      `하위 카테고리 번호 선택 [${cat}]:\n` + subList.map((s, i) => `${i + 1}. ${s}`).join("\n")
-    );
+    const subPick = prompt(`하위 카테고리 번호 선택 [${cat}]:\n` + subList.map((s, i) => `${i + 1}. ${s}`).join("\n"));
     const subIdx = Number(subPick);
     if (!Number.isInteger(subIdx) || subIdx < 1 || subIdx > subList.length) return toast.error("올바른 번호가 아닙니다.");
     const sub = subList[subIdx - 1];
@@ -419,13 +427,9 @@ function Home({
       if (subs2Def && !Array.isArray(subs2Def)) {
         const sub2List = Object.keys(subs2Def);
         if (sub2List.length > 0) {
-          const sub2Pick = prompt(
-            `최하위 카테고리 번호 선택 [${cat} > ${sub}]:\n` +
-              sub2List.map((s, i) => `${i + 1}. ${s}`).join("\n")
-          );
+          const sub2Pick = prompt(`최하위 카테고리 번호 선택 [${cat} > ${sub}]:\n` + sub2List.map((s, i) => `${i + 1}. ${s}`).join("\n"));
           const sub2Idx = Number(sub2Pick);
-          if (!Number.isInteger(sub2Idx) || sub2Idx < 1 || sub2Idx > sub2List.length)
-            return toast.error("올바른 번호가 아닙니다.");
+          if (!Number.isInteger(sub2Idx) || sub2Idx < 1 || sub2Idx > sub2List.length) return toast.error("올바른 번호가 아닙니다.");
           sub2 = sub2List[sub2Idx - 1];
         }
       }
@@ -438,9 +442,7 @@ function Home({
     if (!input) return;
     const name = input.trim();
 
-    const existsAnywhere = locations.some((L) =>
-      getItems(inventory, L, cat, sub, sub2).some((it) => (it.name || "") === name)
-    );
+    const existsAnywhere = locations.some((L) => getItems(inventory, L, cat, sub, sub2).some((it) => (it.name || "") === name));
     if (existsAnywhere) return toast.error("동일한 품목명이 존재합니다");
 
     setInventory((prev) => {
@@ -454,7 +456,7 @@ function Home({
     toast.success(`추가됨: [${cat} > ${sub}${sub2 ? " > " + sub2 : ""}] ${name} (${count}개)`);
   }
 
-  /* 전체 삭제(이름) — 경로 토스트 포함 */
+  /* ===== 전체 삭제(이름) ===== */
   function handleDeleteItem() {
     const name = prompt("삭제할 품목 이름을 입력하세요:");
     if (!name) return;
@@ -537,7 +539,7 @@ function Home({
     toast.success(`삭제됨: ${name}\n총 ${totalCount}개\n\n${lines}${more}`, { style: { whiteSpace: "pre-line" } });
   }
 
-  /* ===== 검색/집계: 품목명 + 하위/최하위 ===== */
+  /* ===== 검색/집계 ===== */
   const filtered = useMemo(() => {
     const q = (searchTerm || "").trim().toLowerCase();
     if (!q) return [];
@@ -566,8 +568,7 @@ function Home({
                 const sub2L = (sub2 || "").toLowerCase();
                 (arr || []).forEach((i) => {
                   const nameL = (i.name || "").toLowerCase();
-                  if (nameL.includes(q) || subL.includes(q) || sub2L.includes(q))
-                    out.push({ loc, cat, sub, sub2, ...i });
+                  if (nameL.includes(q) || subL.includes(q) || sub2L.includes(q)) out.push({ loc, cat, sub, sub2, ...i });
                 });
               });
             }
@@ -610,16 +611,184 @@ function Home({
     }, 80);
   }
 
-  const toggleEditMenu = (key) => setEditKey((prev) => (prev === key ? null : key));
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+  const toggleEditMenu = (key, e) => { if (e) stop(e); setEditKey((prev) => (prev === key ? null : key)); };
 
+  /* ===== 카드 렌더 도우미 ===== */
+  const renderItemRow = (loc, cat, sub, it, idx, sub2) => {
+    const rowKey = `${loc}|${cat}|${sub2 ? `${sub}/${sub2}` : sub}|${it.name}|${idx}`;
+    const open = editKey === rowKey;
+    const refKey = `${loc}-${cat}-${sub}${sub2 ? `-${sub2}` : ""}-${it.name}`;
+    return (
+      <li key={`${it.name}-${idx}`} className={`item-row ${open ? "is-editing" : ""}`} ref={(el) => { if (el) categoryRefs.current[refKey] = el; }} onClick={stop}>
+        <div className="item-text">
+          <span className="item-name">
+            <span className="item-title">{it.name}</span>
+            <span className="item-count">({it.count}개)</span>
+          </span>
+
+          <div className="item-edit">
+            <div className="edit-toolbar" onClick={stop}>
+              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleUpdateItemCount(loc, cat, sub, idx, +1, sub2); }}>＋ 입고</button>
+              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleUpdateItemCount(loc, cat, sub, idx, -1, sub2); }}>－ 출고</button>
+              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleEditItemName(loc, cat, sub, idx, sub2); }}>✎ 이름</button>
+              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleEditItemNote(loc, cat, sub, idx, sub2); }}>📝 메모</button>
+            </div>
+          </div>
+
+          {it.note && <div className="item-note">특이사항: {it.note}</div>}
+        </div>
+
+        <div className="item-actions">
+          <button className="btn btn-secondary btn-compact" onClick={(e) => toggleEditMenu(rowKey, e)} title="이 아이템 수정">
+            {open ? "닫기" : "수정"}
+          </button>
+        </div>
+      </li>
+    );
+  };
+
+  const renderLocCardBody = (loc) => (
+    Object.entries(subcategories).map(([cat, subs]) => (
+      <details key={`${loc}-${cat}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}`] = el)}>
+        <summary className="summary">{catIcon(cat)} {cat}</summary>
+
+        {Array.isArray(subs) ? (
+          subs.map((sub) => (
+            <details key={`${loc}-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
+              <summary className="sub-summary">▸ {sub}</summary>
+              <ul className="item-list">
+                {getItems(inventory, loc, cat, sub).map((it, idx) => renderItemRow(loc, cat, sub, it, idx))}
+              </ul>
+            </details>
+          ))
+        ) : (
+          Object.entries(subs).map(([sub, subs2]) => (
+            Array.isArray(subs2) ? (
+              <details key={`${loc}-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
+                <summary className="sub-summary">▸ {sub}</summary>
+                <ul className="item-list">
+                  {getItems(inventory, loc, cat, sub).map((it, idx) => renderItemRow(loc, cat, sub, it, idx))}
+                </ul>
+              </details>
+            ) : (
+              <details key={`${loc}-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
+                <summary className="sub-summary">▸ {sub}</summary>
+                {Object.keys(subs2).map((sub2) => (
+                  <details key={`${loc}-${cat}-${sub}-${sub2}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}-${sub2}`] = el)} className="sub-details">
+                    <summary className="sub-summary">▸ {sub2}</summary>
+                    <ul className="item-list">
+                      {getItems(inventory, loc, cat, sub, sub2).map((it, idx) => renderItemRow(loc, cat, sub, it, idx, sub2))}
+                    </ul>
+                  </details>
+                ))}
+              </details>
+            )
+          ))
+        )}
+      </details>
+    ))
+  );
+
+  const renderSummaryCardBody = () => (
+    Object.entries(subcategories).map(([cat, subs]) => (
+      <details key={`전체-${cat}`} ref={(el) => (categoryRefs.current[`전체-${cat}`] = el)}>
+        <summary className="summary">{catIcon(cat)} {cat}</summary>
+
+        {Array.isArray(subs) ? (
+          subs.map((sub) => (
+            <details key={`전체-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
+              <summary className="sub-summary">▸ {sub}</summary>
+              <ul className="item-list">
+                {Object.entries(
+                  locations.reduce((acc, L) => {
+                    getItems(inventory, L, cat, sub).forEach((it) => {
+                      acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
+                    });
+                    return acc;
+                  }, {})
+                ).map(([name, count]) => (
+                  <li key={`전체-${cat}-${sub}-${name}`} className="item-row" ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}-${name}`] = el; }} onClick={stop}>
+                    <div className="item-text">
+                      <span className="item-name">
+                        <span className="item-title">{name}</span>
+                        <span className="item-count">({count}개)</span>
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ))
+        ) : (
+          Object.entries(subs).map(([sub, subs2]) => (
+            Array.isArray(subs2) ? (
+              <details key={`전체-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
+                <summary className="sub-summary">▸ {sub}</summary>
+                <ul className="item-list">
+                  {Object.entries(
+                    locations.reduce((acc, L) => {
+                      getItems(inventory, L, cat, sub).forEach((it) => {
+                        acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
+                      });
+                      return acc;
+                    }, {})
+                  ).map(([name, count]) => (
+                    <li key={`전체-${cat}-${sub}-${name}`} className="item-row" ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}-${name}`] = el; }} onClick={stop}>
+                      <div className="item-text">
+                        <span className="item-name">
+                          <span className="item-title">{name}</span>
+                          <span className="item-count">({count}개)</span>
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : (
+              <details key={`전체-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
+                <summary className="sub-summary">▸ {sub}</summary>
+                {Object.keys(subs2).map((sub2) => (
+                  <details key={`전체-${cat}-${sub}-${sub2}`} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}-${sub2}`] = el)} className="sub-details">
+                    <summary className="sub-summary">▸ {sub2}</summary>
+                    <ul className="item-list">
+                      {Object.entries(
+                        locations.reduce((acc, L) => {
+                          getItems(inventory, L, cat, sub, sub2).forEach((it) => {
+                            acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
+                          });
+                          return acc;
+                        }, {})
+                      ).map(([name, count]) => (
+                        <li key={`전체-${cat}-${sub}-${sub2}-${name}`} className="item-row" ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}-${sub2}-${name}`] = el; }} onClick={stop}>
+                          <div className="item-text">
+                            <span className="item-name">
+                              <span className="item-title">{name}</span>
+                              <span className="item-count">({count}개)</span>
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ))}
+              </details>
+            )
+          ))
+        )}
+      </details>
+    ))
+  );
+
+  /* ===== 렌더 ===== */
   return (
-    <main className="stage">
+    <main className="stage main">
       <FixedBg src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`} overlay="rgba(0,0,0,.18)" />
       <NeonBackdrop />
 
       <header className="topbar glass">
         <h1 className="logo">
-          <span className="glow-dot" /> DOKKAEBI<span className="thin">/</span>INVENTORY
+          <span className="glow-dot" /> DOKKEBI<span className="thin">/</span>INVENTORY
         </h1>
 
         <div className="toolbar">
@@ -657,7 +826,6 @@ function Home({
             📘 기록
           </button>
 
-          {/* 로그인/로그아웃 UI는 유지 (권한 가드는 제거했으므로 선택 사항) */}
           {isAdmin && (
             <button
               className="btn btn-ghost"
@@ -695,7 +863,12 @@ function Home({
                     </div>
                     <div className="result-locs">
                       {locations.map((L) => (
-                        <button key={L} className="link pill" onClick={() => scrollToCategory(L, e.cat, e.sub, e.name, e.sub2)} title={`${L}로 이동`}>
+                        <button
+                          key={L}
+                          className="link pill"
+                          onClick={() => scrollToCategory(L, e.cat, e.sub, e.name, e.sub2)}
+                          title={`${L}로 이동`}
+                        >
                           {L}: {e.locs[L] || 0}
                         </button>
                       ))}
@@ -726,8 +899,9 @@ function Home({
         </section>
       )}
 
-      {/* 카드 그리드 */}
-      <section className="grid">
+      {/* 카드 그리드 (장소 3 + 전체 1 = 2×2 배열, ≥1100px에서 전체 중앙) */}
+      <section className="grid summary-grid">
+        {/* 장소 카드 */}
         {locations.map((loc) => (
           <div key={loc} className="card glass hover-rise" ref={(el) => (cardRefs.current[loc] = el)}>
             <div className="card-head" onClick={() => setOpenPanel({ kind: "loc", loc })}>
@@ -742,165 +916,20 @@ function Home({
                 +추가
               </button>
             </div>
-
-            <div className="card-body">
-              {Object.entries(subcategories).map(([cat, subs]) => (
-                <details key={cat} ref={(el) => (categoryRefs.current[`${loc}-${cat}`] = el)}>
-                  <summary className="summary">{catIcon(cat)} {cat}</summary>
-
-                  {Array.isArray(subs) ? (
-                    subs.map((sub) => (
-                      <details key={sub} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
-                        <summary className="sub-summary">▸ {sub}</summary>
-                        <ul className="item-list">
-                          {getItems(inventory, loc, cat, sub).map((it, idx) => {
-                            const rowKey = `${loc}|${cat}|${sub}|${it.name}|${idx}`;
-                            const open = editKey === rowKey;
-                            return (
-                              <li
-                                key={idx}
-                                className={`item-row ${open ? "is-editing" : ""}`}
-                                ref={(el) => {
-                                  const refKey = `${loc}-${cat}-${sub}-${it.name}`;
-                                  if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
-                                }}
-                              >
-                                <div className="item-text">
-                                  <span className="item-name">
-                                    <span className="item-title">{it.name}</span>
-                                    <span className="item-count">({it.count}개)</span>
-                                  </span>
-
-                                  <div className="item-edit">
-                                    <div className="edit-toolbar">
-                                      <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋ 입고</button>
-                                      <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－ 출고</button>
-                                      <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
-                                      <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(loc, cat, sub, idx)}>📝 메모</button>
-                                    </div>
-                                  </div>
-
-                                  {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                                </div>
-
-                                <div className="item-actions">
-                                  <button className="btn btn-secondary btn-compact" onClick={() => toggleEditMenu(rowKey)} title="이 아이템 수정">
-                                    {open ? "닫기" : "수정"}
-                                  </button>
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </details>
-                    ))
-                  ) : (
-                    Object.entries(subs).map(([sub, subs2]) =>
-                      Array.isArray(subs2) ? (
-                        <details key={sub} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
-                          <summary className="sub-summary">▸ {sub}</summary>
-                          <ul className="item-list">
-                            {getItems(inventory, loc, cat, sub).map((it, idx) => {
-                              const rowKey = `${loc}|${cat}|${sub}|${it.name}|${idx}`;
-                              const open = editKey === rowKey;
-                              return (
-                                <li
-                                  key={idx}
-                                  className={`item-row ${open ? "is-editing" : ""}`}
-                                  ref={(el) => {
-                                    const refKey = `${loc}-${cat}-${sub}-${it.name}`;
-                                    if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
-                                  }}
-                                >
-                                  <div className="item-text">
-                                    <span className="item-name">
-                                      <span className="item-title">{it.name}</span>
-                                      <span className="item-count">({it.count}개)</span>
-                                    </span>
-
-                                    <div className="item-edit">
-                                      <div className="edit-toolbar">
-                                        <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1)}>＋ 입고</button>
-                                        <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1)}>－ 출고</button>
-                                        <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(loc, cat, sub, idx)}>✎ 이름</button>
-                                        <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(loc, cat, sub, idx)}>📝 메모</button>
-                                      </div>
-                                      <div className="edit-note-preview">
-                                        {it.note ? `특이사항: ${it.note}` : "메모 없음"}
-                                      </div>
-                                    </div>
-
-                                    {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                                  </div>
-
-                                  <div className="item-actions">
-                                    <button className="btn btn-secondary btn-compact" onClick={() => toggleEditMenu(rowKey)} title="이 아이템 수정">
-                                      {open ? "닫기" : "수정"}
-                                    </button>
-                                  </div>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </details>
-                      ) : (
-                        <details key={sub} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
-                          <summary className="sub-summary">▸ {sub}</summary>
-
-                          {Object.keys(subs2).map((sub2) => (
-                            <details key={sub2} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}-${sub2}`] = el)} className="sub-details">
-                              <summary className="sub-summary">▸ {sub2}</summary>
-                              <ul className="item-list">
-                                {getItems(inventory, loc, cat, sub, sub2).map((it, idx) => {
-                                  const rowKey = `${loc}|${cat}|${sub}/${sub2}|${it.name}|${idx}`;
-                                  const open = editKey === rowKey;
-                                  return (
-                                    <li
-                                      key={idx}
-                                      className={`item-row ${open ? "is-editing" : ""}`}
-                                      ref={(el) => {
-                                        const refKey = `${loc}-${cat}-${sub}-${sub2}-${it.name}`;
-                                        if (el && !categoryRefs.current[refKey]) categoryRefs.current[refKey] = el;
-                                      }}
-                                    >
-                                      <div className="item-text">
-                                        <span className="item-name">
-                                          <span className="item-title">{it.name}</span>
-                                          <span className="item-count">({it.count}개)</span>
-                                        </span>
-
-                                        <div className="item-edit">
-                                          <div className="edit-toolbar">
-                                            <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, +1, sub2)}>＋ 입고</button>
-                                            <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(loc, cat, sub, idx, -1, sub2)}>－ 출고</button>
-                                            <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(loc, cat, sub, idx, sub2)}>✎ 이름</button>
-                                            <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(loc, cat, sub, idx, sub2)}>📝 메모</button>
-                                          </div>
-                                        </div>
-
-                                        {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                                      </div>
-
-                                      <div className="item-actions">
-                                        <button className="btn btn-secondary btn-compact" onClick={() => toggleEditMenu(rowKey)} title="이 아이템 수정">
-                                          {open ? "닫기" : "수정"}
-                                        </button>
-                                      </div>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            </details>
-                          ))}
-                        </details>
-                      )
-                    )
-                  )}
-                </details>
-              ))}
-            </div>
+            <div className="card-body">{renderLocCardBody(loc)}</div>
           </div>
         ))}
+
+        {/* 전체 카드 (요약) */}
+        <div className="card glass hover-rise card--summary" ref={(el) => (cardRefs.current["summary"] = el)}>
+          <div className="card-head" onClick={() => setOpenPanel({ kind: "summary" })}>
+            <h2 className="card-title">전체</h2>
+            <button className="btn btn-danger" onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}>
+              삭제
+            </button>
+          </div>
+          <div className="card-body">{renderSummaryCardBody()}</div>
+        </div>
       </section>
 
       {/* 확대보기 팝업 */}
@@ -916,332 +945,18 @@ function Home({
 
             <div className="popup-body">
               {openPanel.kind === "summary" ? (
-                Object.entries(subcategories).map(([cat, subs]) => (
-                  <details key={cat} open>
-                    <summary className="summary">{catIcon(cat)} {cat}</summary>
-                    {Array.isArray(subs) ? (
-                      subs.map((sub) => (
-                        <details key={sub} open className="sub-details">
-                          <summary className="sub-summary">▸ {sub}</summary>
-                          <ul className="item-list">
-                            {Object.entries(
-                              locations.reduce((acc, L) => {
-                                getItems(inventory, L, cat, sub).forEach((it) => {
-                                  acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                                });
-                                return acc;
-                              }, {})
-                            ).map(([name, count]) => (
-                              <li key={name} className="item-row">
-                                <div className="item-text">
-                                  <span className="item-name">
-                                    <span className="item-title">{name}</span>
-                                    <span className="item-count">({count}개)</span>
-                                  </span>
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      ))
-                    ) : (
-                      Object.entries(subs).map(([sub, subs2]) =>
-                        Array.isArray(subs2) ? (
-                          <details key={sub} open className="sub-details">
-                            <summary className="sub-summary">▸ {sub}</summary>
-                            <ul className="item-list">
-                              {Object.entries(
-                                locations.reduce((acc, L) => {
-                                  getItems(inventory, L, cat, sub).forEach((it) => {
-                                    acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                                  });
-                                  return acc;
-                                }, {})
-                              ).map(([name, count]) => (
-                                <li key={name} className="item-row">
-                                  <div className="item-text">
-                                    <span className="item-name">
-                                      <span className="item-title">{name}</span>
-                                      <span className="item-count">({count}개)</span>
-                                    </span>
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
-                        ) : (
-                          <details key={sub} open className="sub-details">
-                            <summary className="sub-summary">▸ {sub}</summary>
-                            {Object.keys(subs2).map((sub2) => (
-                              <details key={sub2} open className="sub-details">
-                                <summary className="sub-summary">▸ {sub2}</summary>
-                                <ul className="item-list">
-                                  {Object.entries(
-                                    locations.reduce((acc, L) => {
-                                      getItems(inventory, L, cat, sub, sub2).forEach((it) => {
-                                        acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                                      });
-                                      return acc;
-                                    }, {})
-                                  ).map(([name, count]) => (
-                                    <li key={name} className="item-row">
-                                      <div className="item-text">
-                                        <span className="item-name">
-                                          <span className="item-title">{name}</span>
-                                          <span className="item-count">({count}개)</span>
-                                        </span>
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </details>
-                            ))}
-                          </details>
-                        )
-                      )
-                    )}
-                  </details>
-                ))
+                renderSummaryCardBody()
               ) : (
-                Object.entries(subcategories).map(([cat, subs]) => (
-                  <details key={cat} open>
-                    <summary className="summary">{catIcon(cat)} {cat}</summary>
-                    {Array.isArray(subs) ? (
-                      subs.map((sub) => (
-                        <details key={sub} open className="sub-details">
-                          <summary className="sub-summary">▸ {sub}</summary>
-                          <ul className="item-list">
-                            {getItems(inventory, openPanel.loc, cat, sub).map((it, idx) => {
-                              const rowKey = `${openPanel.loc}|${cat}|${sub}|${it.name}|${idx}`;
-                              const open = editKey === rowKey;
-                              return (
-                                <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
-                                  <div className="item-text">
-                                    <span className="item-name">
-                                      <span className="item-title">{it.name}</span>
-                                      <span className="item-count">({it.count}개)</span>
-                                    </span>
-                                    <div className="item-edit">
-                                      <div className="edit-toolbar">
-                                        <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>＋ 입고</button>
-                                        <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>－ 출고</button>
-                                        <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>✎ 이름</button>
-                                        <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>📝 메모</button>
-                                      </div>
-                                      <div className="edit-note-preview">
-                                        {it.note ? `특이사항: ${it.note}` : "메모 없음"}
-                                      </div>
-                                    </div>
-                                    {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                                  </div>
-                                  <div className="item-actions">
-                                    <button className="btn btn-secondary btn-compact" onClick={() => setEditKey(open ? null : rowKey)} title="이 아이템 수정">
-                                      {open ? "닫기" : "수정"}
-                                    </button>
-                                  </div>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </details>
-                      ))
-                    ) : (
-                      Object.entries(subs).map(([sub, subs2]) =>
-                        Array.isArray(subs2) ? (
-                          <details key={sub} open className="sub-details">
-                            <summary className="sub-summary">▸ {sub}</summary>
-                            <ul className="item-list">
-                              {getItems(inventory, openPanel.loc, cat, sub).map((it, idx) => {
-                                const rowKey = `${openPanel.loc}|${cat}|${sub}|${it.name}|${idx}`;
-                                const open = editKey === rowKey;
-                                return (
-                                  <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
-                                    <div className="item-text">
-                                      <span className="item-name">
-                                        <span className="item-title">{it.name}</span>
-                                        <span className="item-count">({it.count}개)</span>
-                                      </span>
-                                      <div className="item-edit">
-                                        <div className="edit-toolbar">
-                                          <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1)}>＋ 입고</button>
-                                          <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1)}>－ 출고</button>
-                                          <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx)}>✎ 이름</button>
-                                          <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx)}>📝 메모</button>
-                                        </div>
-                                        <div className="edit-note-preview">
-                                          {it.note ? `특이사항: ${it.note}` : "메모 없음"}
-                                        </div>
-                                      </div>
-                                      {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                                    </div>
-                                    <div className="item-actions">
-                                      <button className="btn btn-secondary btn-compact" onClick={() => setEditKey(open ? null : rowKey)} title="이 아이템 수정">
-                                        {open ? "닫기" : "수정"}
-                                      </button>
-                                    </div>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </details>
-                        ) : (
-                          <details key={sub} open className="sub-details">
-                            <summary className="sub-summary">▸ {sub}</summary>
-                            {Object.keys(subs2).map((sub2) => (
-                              <details key={sub2} open className="sub-details">
-                                <summary className="sub-summary">▸ {sub2}</summary>
-                                <ul className="item-list">
-                                  {getItems(inventory, openPanel.loc, cat, sub, sub2).map((it, idx) => {
-                                    const rowKey = `${openPanel.loc}|${cat}|${sub}/${sub2}|${it.name}|${idx}`;
-                                    const open = editKey === rowKey;
-                                    return (
-                                      <li key={idx} className={`item-row ${open ? "is-editing" : ""}`}>
-                                        <div className="item-text">
-                                          <span className="item-name">
-                                            <span className="item-title">{it.name}</span>
-                                            <span className="item-count">({it.count}개)</span>
-                                          </span>
-                                          <div className="item-edit">
-                                            <div className="edit-toolbar">
-                                              <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, +1, sub2)}>＋ 입고</button>
-                                              <button className="btn btn-ghost btn-compact" onClick={() => handleUpdateItemCount(openPanel.loc, cat, sub, idx, -1, sub2)}>－ 출고</button>
-                                              <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemName(openPanel.loc, cat, sub, idx, sub2)}>✎ 이름</button>
-                                              <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(openPanel.loc, cat, sub, idx, sub2)}>📝 메모</button>
-                                            </div>
-                                            <div className="edit-note-preview">
-                                              {it.note ? `특이사항: ${it.note}` : "메모 없음"}
-                                            </div>
-                                          </div>
-                                          {it.note && <div className="item-note">특이사항: {it.note}</div>}
-                                        </div>
-                                        <div className="item-actions">
-                                          <button className="btn btn-secondary btn-compact" onClick={() => setEditKey(open ? null : rowKey)} title="이 아이템 수정">
-                                            {open ? "닫기" : "수정"}
-                                          </button>
-                                        </div>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              </details>
-                            ))}
-                          </details>
-                        )
-                      )
-                    )}
-                  </details>
-                ))
+                renderLocCardBody(openPanel.loc)
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 전체 요약 */}
-      <section className="grid">
-        <div className="card glass hover-rise" ref={(el) => (cardRefs.current["summary"] = el)}>
-          <div className="card-head" onClick={() => setOpenPanel({ kind: "summary" })}>
-            <h2 className="card-title">전체</h2>
-            <button className="btn btn-danger" onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}>
-              삭제
-            </button>
-          </div>
-
-          <div className="card-body">
-            {Object.entries(subcategories).map(([cat, subs]) => (
-              <details key={cat} ref={(el) => (categoryRefs.current[`전체-${cat}`] = el)}>
-                <summary className="summary">{catIcon(cat)} {cat}</summary>
-
-                {Array.isArray(subs) ? (
-                  subs.map((sub) => (
-                    <details key={sub} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
-                      <summary className="sub-summary">▸ {sub}</summary>
-                      <ul className="item-list">
-                        {Object.entries(
-                          locations.reduce((acc, L) => {
-                            getItems(inventory, L, cat, sub).forEach((it) => {
-                              acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                            });
-                            return acc;
-                          }, {})
-                        ).map(([name, count]) => (
-                          <li key={name} className="item-row">
-                            <div className="item-text">
-                              <span className="item-name">
-                                <span className="item-title">{name}</span>
-                                <span className="item-count">({count}개)</span>
-                              </span>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  ))
-                ) : (
-                  Object.entries(subs).map(([sub, subs2]) =>
-                    Array.isArray(subs2) ? (
-                      <details key={sub} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
-                        <summary className="sub-summary">▸ {sub}</summary>
-                        <ul className="item-list">
-                          {Object.entries(
-                            locations.reduce((acc, L) => {
-                              getItems(inventory, L, cat, sub).forEach((it) => {
-                                acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                              });
-                              return acc;
-                            }, {})
-                          ).map(([name, count]) => (
-                            <li key={name} className="item-row">
-                              <div className="item-text">
-                                <span className="item-name">
-                                  <span className="item-title">{name}</span>
-                                  <span className="item-count">({count}개)</span>
-                                </span>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    ) : (
-                      <details key={sub} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
-                        <summary className="sub-summary">▸ {sub}</summary>
-                        {Object.keys(subs2).map((sub2) => (
-                          <details key={sub2} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}-${sub2}`] = el)} className="sub-details">
-                            <summary className="sub-summary">▸ {sub2}</summary>
-                            <ul className="item-list">
-                              {Object.entries(
-                                locations.reduce((acc, L) => {
-                                  getItems(inventory, L, cat, sub, sub2).forEach((it) => {
-                                    acc[it.name] = (acc[it.name] || 0) + (it.count || 0);
-                                  });
-                                  return acc;
-                                }, {})
-                              ).map(([name, count]) => (
-                                <li key={name} className="item-row">
-                                  <div className="item-text">
-                                    <span className="item-name">
-                                      <span className="item-title">{name}</span>
-                                      <span className="item-count">({count}개)</span>
-                                    </span>
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
-                        ))}
-                      </details>
-                    )
-                  )
-                )}
-              </details>
-            ))}
-          </div>
-        </div>
-      </section>
-
       <footer className="site-footer">
         <p>
-          © 강원도립대 드론융합과 24학번 최석민 — 드론축구단 재고·입출고 관리 콘솔<br />
+          © 강원도립대 드론융합과 24학번 최석민 - 드론축구단 재고·입출고 관리 콘솔<br />
           문의: <a href="mailto:gwdokkebinv@gmail.com">gwdokkebinv@gmail.com</a>
         </p>
       </footer>
@@ -1250,7 +965,7 @@ function Home({
 }
 
 /* =========================
-   5) 기록 페이지
+   6) 기록 페이지
    ========================= */
 function LogsPage({ logs, setLogs }) {
   const [syncing, setSyncing] = useState(false);
@@ -1306,7 +1021,7 @@ function LogsPage({ logs, setLogs }) {
     const id = logs[i].id;
     const next = [...logs];
     next[i].reason = note;
-    setLogs(next); // 낙관적
+    setLogs(next);
     update(ref(`logs/${id}`), { reason: note })
       .then(() => toast.success("메모 저장됨"))
       .catch((err) => toast.error(`클라우드 동기화 실패: ${err?.code || err?.message || err}`));
@@ -1317,7 +1032,7 @@ function LogsPage({ logs, setLogs }) {
     if (!window.confirm("삭제하시겠습니까?")) return;
 
     const id = logs[i].id;
-    setLogs((prev) => prev.filter((_, j) => j !== i)); // 낙관적
+    setLogs((prev) => prev.filter((_, j) => j !== i));
     remove(ref(`logs/${id}`))
       .then(() => toast.success("로그 삭제됨"))
       .catch((err) => toast.error(`클라우드 동기화 실패: ${err?.code || err?.message || err}`));
@@ -1346,7 +1061,7 @@ function LogsPage({ logs, setLogs }) {
   }
 
   return (
-    <main className="stage">
+    <main className="stage main">
       <FixedBg src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`} overlay="rgba(0,0,0,.22)" />
       <NeonBackdrop />
 
@@ -1398,7 +1113,7 @@ function LogsPage({ logs, setLogs }) {
               {grouped[d].map((l, i) => {
                 const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
                 return (
-                  <li key={i} className="log-row">
+                  <li key={`${l.id || "local"}-${i}`} className="log-row">
                     <div className="log-text">
                       <div className="log-line">
                         <span className="time">[{l.time}]</span> {l.location} &gt; {l.category} &gt; {l.subcategory} / <strong>{l.item}</strong>
@@ -1425,13 +1140,13 @@ function LogsPage({ logs, setLogs }) {
 }
 
 /* =========================
-   6) AppWrapper (실시간 동기화)
+   7) AppWrapper (실시간 동기화)
    ========================= */
 export default function AppWrapper() {
   const [inventory, setInventory] = useState(getLocalInventory);
   const [searchTerm, setSearchTerm] = useState("");
   const [logs, setLogs] = useState(getLocalLogs);
-  const isAdmin = getLocalAdmin(); // 권한 판단엔 더 이상 사용하지 않지만, UI/로그인 유지용
+  const isAdmin = getLocalAdmin();
   const userId = getLocalUserId();
   const userName = getLocalUserName();
 
@@ -1468,14 +1183,14 @@ export default function AppWrapper() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 로컬→클라우드 (항상 쓰기 허용: 수정 자유성)
+  // 로컬→클라우드 (inventory set 전체 저장)
   useEffect(() => {
     if (applyingCloudRef.current.inv) { applyingCloudRef.current.inv = false; return; }
     saveLocalInventory(inventory);
     set(ref("inventory/"), inventory).catch(() => {});
   }, [inventory]);
 
-  // 10분 무활동 자동 로그아웃(선택적으로 유지)
+  // 10분 무활동 자동 로그아웃(선택적)
   useEffect(() => {
     if (!isAdmin) return;
     const LOGOUT_AFTER = 10 * 60 * 1000;
@@ -1507,10 +1222,8 @@ export default function AppWrapper() {
           error: { style: { background: "#160b12", color: "#ff7ba1" } },
         }}
       />
-
       <Router>
         <Routes>
-          {/* 권한 가드 제거: 누구나 접근 */}
           <Route
             path="/"
             element={
@@ -1528,7 +1241,6 @@ export default function AppWrapper() {
             }
           />
           <Route path="/logs" element={<LogsPage logs={logs} setLogs={setLogs} />} />
-          {/* 로그인은 선택 기능로 유지 */}
           <Route
             path="/login"
             element={
@@ -1538,7 +1250,6 @@ export default function AppWrapper() {
                     saveLocalAdmin(true);
                     localStorage.setItem("do-kkae-bi-user-id", uid);
                     localStorage.setItem("do-kkae-bi-user-name", name);
-                    // 바로 새로고침 없이도 반영되도록 상태 업데이트
                     window.location.hash = "#/";
                     window.location.reload();
                   } else {

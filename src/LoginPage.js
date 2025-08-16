@@ -21,7 +21,7 @@ export default function LoginPage({ onLogin }) {
           src={`${process.env.PUBLIC_URL}/white.png`}
           alt=""
           className="fixed-bg-img"
-          style={{ maxWidth: "min(70vw, 900px)", maxHeight: "min(65vh, 700px)" }}
+          style={{ maxWidth: "min(100vw, 1200px)", maxHeight: "min(95vh, 1000px)" }}
         />
       </div>
 
@@ -36,7 +36,7 @@ export default function LoginPage({ onLogin }) {
             <span className="dot dot-purple" />
             <span className="dot dot-blue" />
           </div>
-          <h1 className="brand-title">DOKKEBI INVENTORY</h1>
+          <h1 className="brand-title">DOKKEBI<span className="thin">/</span>INVENTORY</h1>
           <b className="brand-sub">드론축구단 재고·입출고 관리 콘솔</b>
         </div>
         
