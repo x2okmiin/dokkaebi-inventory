@@ -6,7 +6,7 @@ import "./App.css";
 import LoginPage from "./LoginPage";
 import { Toaster, toast } from "react-hot-toast";
 
-/* Firebase 래퍼 사용 (ref("path") 형태) */
+/* Firebase (래퍼: ref(path)만 받음) */
 import { ref, set, onValue } from "./firebase";
 
 /* =========================
@@ -104,9 +104,9 @@ function getLocalUserId() {
 }
 function getLocalUserName() {
   return localStorage.getItem("do-kkae-bi-user-name") || "";
+}
 
 /* 고정 배경 */
-}
 function FixedBg({
   src,
   overlay = null,
@@ -194,60 +194,8 @@ function Home({
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const dataMenuRef = useRef(null);
   const [openPanel, setOpenPanel] = useState(null);
+
   const [editKey, setEditKey] = useState(null); // 행 단일 편집
-
-  // ✅ RTDB 루프 방지 플래그
-  const applyingCloudRef = useRef({ inv: false, logs: false });
-
-  /* -------------------------
-     Firebase 실시간 동기화
-     ------------------------- */
-
-  // 로컬 → 클라우드 (관리자만)
-  useEffect(() => {
-    if (applyingCloudRef.current.inv) {
-      applyingCloudRef.current.inv = false;
-      return;
-    }
-    saveLocalInventory(inventory);
-    if (isAdmin) set(ref("inventory/"), inventory).catch(() => {});
-  }, [inventory, isAdmin]);
-
-  useEffect(() => {
-    if (applyingCloudRef.current.logs) {
-      applyingCloudRef.current.logs = false;
-      return;
-    }
-    saveLocalLogs(logs);
-    if (isAdmin) set(ref("logs/"), logs).catch(() => {});
-  }, [logs, isAdmin]);
-
-  // 클라우드 → 로컬 (구독)
-  useEffect(() => {
-    const unsubInv = onValue(ref("inventory/"), (snap) => {
-      if (!snap.exists()) return;
-      const cloud = snap.val();
-      if (JSON.stringify(cloud) !== JSON.stringify(inventory)) {
-        applyingCloudRef.current.inv = true;
-        setInventory(cloud);
-      }
-    });
-
-    const unsubLogs = onValue(ref("logs/"), (snap) => {
-      if (!snap.exists()) return;
-      const cloud = snap.val();
-      if (JSON.stringify(cloud) !== JSON.stringify(logs)) {
-        applyingCloudRef.current.logs = true;
-        setLogs(cloud);
-      }
-    });
-
-    return () => {
-      unsubInv();
-      unsubLogs();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /* 동기화 인디케이터 */
   useEffect(() => {
@@ -262,8 +210,8 @@ function Home({
       if (dataMenuRef.current && !dataMenuRef.current.contains(e.target)) setDataMenuOpen(false);
     }
     if (dataMenuOpen) {
-      document.addEventListener("mousedown", onClickOutside, { passive: true });
-      document.addEventListener("touchstart", onClickOutside, { passive: true });
+      document.addEventListener("mousedown", onClickOutside);
+      document.addEventListener("touchstart", onClickOutside);
     }
     return () => {
       document.removeEventListener("mousedown", onClickOutside);
@@ -515,46 +463,47 @@ function Home({
     toast.success(`추가됨: [${cat} > ${sub}${sub2 ? " > " + sub2 : ""}] ${name} (${count}개)`);
   }
 
-  /* 전체 삭제(이름으로) */
-/* 전체 삭제(이름으로) — 경로 상세 토스트 포함 */
-function handleDeleteItem() {
-  if (!isAdmin) return;
-  const name = prompt("삭제할 품목 이름을 입력하세요:");
-  if (!name) return;
+  /* 전체 삭제(이름으로) — 경로 상세 토스트 포함 */
+  function handleDeleteItem() {
+    if (!isAdmin) return;
+    const name = prompt("삭제할 품목 이름을 입력하세요:");
+    if (!name) return;
 
-  // 1) 어디에서(장소/카테고리/하위/최하위) 몇 개 있었는지 먼저 수집
-  const foundDetails = [];
-  let totalCount = 0;
+    // 1) 어디에서(장소/카테고리/하위/최하위) 몇 개 있었는지 수집
+    const foundDetails = [];
+    let totalCount = 0;
 
-  locations.forEach((L) => {
-    Object.keys(inventory[L] || {}).forEach((cat) => {
-      Object.keys(inventory[L][cat] || {}).forEach((sub) => {
-        const node = inventory[L][cat][sub];
+    locations.forEach((L) => {
+      Object.keys(inventory[L] || {}).forEach((cat) => {
+        Object.keys(inventory[L][cat] || {}).forEach((sub) => {
+          const node = inventory[L][cat][sub];
 
-        if (Array.isArray(node)) {
-          node.forEach((item) => {
-            if (item.name === name) {
-              const c = item.count || 0;
-              totalCount += c;
-              foundDetails.push({ L, cat, sub, sub2: null, count: c });
-            }
-          });
-        } else if (node && typeof node === "object") {
-          Object.keys(node).forEach((sub2) => {
-            (node[sub2] || []).forEach((item) => {
+          if (Array.isArray(node)) {
+            node.forEach((item) => {
               if (item.name === name) {
                 const c = item.count || 0;
                 totalCount += c;
-                foundDetails.push({ L, cat, sub, sub2, count: c });
+                foundDetails.push({ L, cat, sub, sub2: null, count: c });
               }
             });
-          });
-        }
+          } else if (node && typeof node === "object") {
+            Object.keys(node).forEach((sub2) => {
+              (node[sub2] || []).forEach((item) => {
+                if (item.name === name) {
+                  const c = item.count || 0;
+                  totalCount += c;
+                  foundDetails.push({ L, cat, sub, sub2, count: c });
+                }
+              });
+            });
+          }
+        });
       });
     });
-  });
+
     if (totalCount === 0) return toast.error("해당 품목이 존재하지 않습니다.");
-  // 2) 실제 삭제
+
+    // 2) 실제 삭제
     setInventory((prev) => {
       const newInv = JSON.parse(JSON.stringify(prev));
       locations.forEach((L) => {
@@ -573,7 +522,8 @@ function handleDeleteItem() {
       });
       return newInv;
     });
-  // 3) 로그 기록
+
+    // 3) 로그 기록
     const now = new Date(), ts = now.toISOString(), time = now.toLocaleString();
     setLogs((prev) => [
       {
@@ -591,97 +541,70 @@ function handleDeleteItem() {
       },
       ...prev,
     ]);
-  // 4) 경로 상세 토스트
-  // 0개인 경로는 보통 안 보고 싶으니 >0만 노출
-  const nonZero = foundDetails.filter((f) => f.count > 0);
-  const lines = nonZero
-    .slice(0, 8) // 너무 길어지면 8줄까지만 보여주고…
-    .map(
-      ({ L, cat, sub, sub2, count }) =>
-        `• ${L} > ${cat} > ${sub}${sub2 ? " > " + sub2 : ""} : ${count}개`
-    )
-    .join("\n");
-  const more =
-    nonZero.length > 8 ? `\n외 ${nonZero.length - 8}개 경로…` : "";
 
-  toast.success(
-    `삭제됨: ${name}\n총 ${totalCount}개\n\n${lines}${more}`,
-    { style: { whiteSpace: "pre-line" } }
-  );
+    // 4) 경로 상세 토스트
+    const nonZero = foundDetails.filter((f) => f.count > 0);
+    const lines = nonZero
+      .slice(0, 8)
+      .map(
+        ({ L, cat, sub, sub2, count }) =>
+          `• ${L} > ${cat} > ${sub}${sub2 ? " > " + sub2 : ""} : ${count}개`
+      )
+      .join("\n");
+    const more = nonZero.length > 8 ? `\n외 ${nonZero.length - 8}개 경로…` : "";
 
-  // (옵션) 경로 클립보드 복사까지 원하면 아래 주석 해제
-  // navigator.clipboard.writeText(
-  //   [`[삭제] ${name} (총 ${totalCount}개)`, ...nonZero.map(
-  //     ({ L, cat, sub, sub2, count }) =>
-  //       `${L} > ${cat} > ${sub}${sub2 ? " > " + sub2 : ""} : ${count}개`
-  //   )].join("\n")
-  // ).then(() => toast("경로 복사됨"));
+    toast.success(`삭제됨: ${name}\n총 ${totalCount}개\n\n${lines}${more}`, {
+      style: { whiteSpace: "pre-line" },
+    });
   }
-  
 
-/* ===== 검색/집계: 3단계 대응 — 품목명 + 하위/최하위 검색 ===== */
-const filtered = useMemo(() => {
-  const q = (searchTerm || "").trim().toLowerCase();
-  if (!q) return [];
+  /* ===== 검색/집계: 3단계 대응 — 품목명 + 하위/최하위 검색 ===== */
+  const filtered = useMemo(() => {
+    const q = (searchTerm || "").trim().toLowerCase();
+    if (!q) return [];
 
-  const out = [];
-  Object.entries(inventory).forEach(([loc, cats]) => {
-    Object.entries(cats || {}).forEach(([cat, subs]) => {
-
-      if (Array.isArray(subs)) {
-        // 🔹 상위→하위(배열) 구조
-        subs.forEach((sub) => {
-          const subL = (sub || "").toLowerCase();
-          (getItems(inventory, loc, cat, sub) || []).forEach((i) => {
-            const nameL = (i.name || "").toLowerCase();
-            if (
-              nameL.includes(q) ||
-              subL.includes(q)
-              // || catL.includes(q)  // ← 상위까지 검색 원하면 주석 해제
-            ) {
-              out.push({ loc, cat, sub, sub2: null, ...i });
-            }
-          });
-        });
-      } else {
-        // 🔹 상위→하위(객체) → 최하위(배열/객체)
-        Object.entries(subs || {}).forEach(([sub, node]) => {
-          const subL = (sub || "").toLowerCase();
-
-          if (Array.isArray(node)) {
-            (node || []).forEach((i) => {
+    const out = [];
+    Object.entries(inventory).forEach(([loc, cats]) => {
+      Object.entries(cats || {}).forEach(([cat, subs]) => {
+        if (Array.isArray(subs)) {
+          // 2단계
+          subs.forEach((sub) => {
+            const subL = (sub || "").toLowerCase();
+            (getItems(inventory, loc, cat, sub) || []).forEach((i) => {
               const nameL = (i.name || "").toLowerCase();
-              if (
-                nameL.includes(q) ||
-                subL.includes(q)
-                // || catL.includes(q)
-              ) {
+              if (nameL.includes(q) || subL.includes(q)) {
                 out.push({ loc, cat, sub, sub2: null, ...i });
               }
             });
-          } else if (node && typeof node === "object") {
-            Object.entries(node).forEach(([sub2, arr]) => {
-              const sub2L = (sub2 || "").toLowerCase();
-              (arr || []).forEach((i) => {
+          });
+        } else {
+          // 3단계
+          Object.entries(subs || {}).forEach(([sub, node]) => {
+            const subL = (sub || "").toLowerCase();
+            if (Array.isArray(node)) {
+              (node || []).forEach((i) => {
                 const nameL = (i.name || "").toLowerCase();
-                if (
-                  nameL.includes(q) ||
-                  subL.includes(q) ||
-                  sub2L.includes(q)
-                  // || catL.includes(q)
-                ) {
-                  out.push({ loc, cat, sub, sub2, ...i });
+                if (nameL.includes(q) || subL.includes(q)) {
+                  out.push({ loc, cat, sub, sub2: null, ...i });
                 }
               });
-            });
-          }
-        });
-      }
+            } else if (node && typeof node === "object") {
+              Object.entries(node).forEach(([sub2, arr]) => {
+                const sub2L = (sub2 || "").toLowerCase();
+                (arr || []).forEach((i) => {
+                  const nameL = (i.name || "").toLowerCase();
+                  if (nameL.includes(q) || subL.includes(q) || sub2L.includes(q)) {
+                    out.push({ loc, cat, sub, sub2, ...i });
+                  }
+                });
+              });
+            }
+          });
+        }
+      });
     });
-  });
-  return out;
-}, [inventory, searchTerm]);
-
+    return out;
+  }, [inventory, searchTerm]);
 
   const aggregated = useMemo(() => {
     const map = {};
@@ -695,6 +618,7 @@ const filtered = useMemo(() => {
   }, [filtered]);
 
   function scrollToCategory(loc, cat, sub, itemName, sub2 = null) {
+    // 해당 loc의 details 닫기
     Object.keys(categoryRefs.current).forEach((k) => {
       if (k.startsWith(`${loc}-`)) {
         const el = categoryRefs.current[k];
@@ -789,7 +713,7 @@ const filtered = useMemo(() => {
         </div>
       </header>
 
-      {/* 동기화 표시 (헤더 바로 아래 1곳만) */}
+      {/* 동기화 표시 */}
       {syncing && (
         <div className="sync-indicator">
           <span className="spinner" /> 실시간 동기화…
@@ -921,6 +845,9 @@ const filtered = useMemo(() => {
                                           <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(loc, cat, sub, idx)}>
                                             📝 메모
                                           </button>
+                                        </div>
+                                        <div className="edit-note-preview">
+                                          {it.note ? `특이사항: ${it.note}` : "메모 없음"}
                                         </div>
                                       </>
                                     )}
@@ -1070,9 +997,6 @@ const filtered = useMemo(() => {
                                                 <button className="btn btn-ghost btn-compact" onClick={() => handleEditItemNote(loc, cat, sub, idx, sub2)}>
                                                   📝 메모
                                                 </button>
-                                              </div>
-                                              <div className="edit-note-preview">
-                                                {it.note ? `특이사항: ${it.note}` : "메모 없음"}
                                               </div>
                                             </>
                                           )}
@@ -1409,6 +1333,7 @@ const filtered = useMemo(() => {
           </div>
         </div>
       )}
+
       {/* 전체 요약 (읽기 전용) */}
       <section className="grid">
         <div className="card glass hover-rise" ref={(el) => (cardRefs.current["summary"] = el)}>
@@ -1536,7 +1461,10 @@ function LogsPage({ logs, setLogs }) {
   const [locationFilter, setLocationFilter] = useState("");
   const menuRef = useRef(null);
 
+  // 로컬 백업(보조)
   useEffect(() => saveLocalLogs(logs), [logs]);
+
+  // 동기화 인디케이터
   useEffect(() => {
     setSyncing(true);
     const t = setTimeout(() => setSyncing(false), 700);
@@ -1576,18 +1504,22 @@ function LogsPage({ logs, setLogs }) {
   function editReason(i) {
     const note = prompt("메모:", logs[i].reason || "");
     if (note === null) return;
-    const arr = [...logs];
-    arr[i].reason = note;
-    setLogs(arr);
-    toast.success("메모 저장됨");
+    const next = [...logs];
+    next[i].reason = note;
+      setLogs(next);  
+      set(ref("logs/"), next)    
+      .then(() => toast.success("메모 저장됨"))
+      .catch((err) => toast.error(`클라우드 동기화 실패: ${err?.code || err?.message || err}`));
   }
 
   function deleteLog(i) {
     if (window.confirm("삭제하시겠습니까?")) {
-      setLogs((prev) => prev.filter((_, j) => j !== i));
-      toast.success("로그 삭제됨");
-    }
-  }
+      const next = logs.filter((_, j) => j !== i);
+      setLogs(next); 
+      set(ref("logs/"), next)      
+        .then(() => toast.success("로그 삭제됨"))
+        .catch((err) => toast.error(`클라우드 동기화 실패: ${err?.code || err?.message || err}`));
+    }}
 
   useEffect(() => {
     function onClickOutside(e) {
@@ -1654,7 +1586,7 @@ function LogsPage({ logs, setLogs }) {
         <button className="btn btn-ghost" onClick={() => navigate("/")}>
           ← 돌아가기
         </button>
-        <h1 className="logo">📘입출고 기록</h1>
+        <h1 className="logo">입출고 기록</h1>
 
         {/* 폰/태블릿에선 타이틀 아래로 풀폭 정렬 */}
         <div className="toolbar">
@@ -1761,7 +1693,7 @@ function LogsPage({ logs, setLogs }) {
 }
 
 /* =========================
-   6) AppWrapper
+   6) AppWrapper (전역 실시간 동기화)
    ========================= */
 export default function AppWrapper() {
   const [inventory, setInventory] = useState(getLocalInventory);
@@ -1771,7 +1703,64 @@ export default function AppWrapper() {
   const [userId, setUserId] = useState(getLocalUserId);
   const [userName, setUserName] = useState(getLocalUserName);
 
-  // ⏱️ 10분 무활동 자동 로그아웃 
+  // ✅ 전역 동기화 플래그/스냅샷 ref
+  const applyingCloudRef = useRef({ inv: false, logs: false });
+  const invStateRef = useRef(inventory);
+  const logsStateRef = useRef(logs);
+
+  useEffect(() => { invStateRef.current = inventory; }, [inventory]);
+  useEffect(() => { logsStateRef.current = logs; }, [logs]);
+
+  // ✅ 클라우드 → 로컬 (앱 생애주기 동안 1회 구독)
+  useEffect(() => {
+    const invRefFB = ref("inventory/");
+    const logRefFB = ref("logs/");
+
+    const unsubInv = onValue(invRefFB, (snap) => {
+      if (!snap.exists()) return;
+      const cloud = snap.val();
+      if (JSON.stringify(cloud) !== JSON.stringify(invStateRef.current)) {
+        applyingCloudRef.current.inv = true;
+        setInventory(cloud);
+      }
+    });
+
+    const unsubLogs = onValue(logRefFB, (snap) => {
+      if (!snap.exists()) return;
+      const cloud = snap.val();
+      if (JSON.stringify(cloud) !== JSON.stringify(logsStateRef.current)) {
+        applyingCloudRef.current.logs = true;
+        setLogs(cloud);
+      }
+    });
+
+    return () => {
+      unsubInv();
+      unsubLogs();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ✅ 로컬 → 클라우드 (관리자만; 루프 방지)
+  useEffect(() => {
+    if (applyingCloudRef.current.inv) { applyingCloudRef.current.inv = false; return; }
+    saveLocalInventory(inventory);
+    if (getLocalAdmin()) {
+      set(ref("inventory/"), inventory).catch(() => {});
+    }
+  }, [inventory]);
+
+  useEffect(() => {
+    if (applyingCloudRef.current.logs) { applyingCloudRef.current.logs = false; return; }
+    saveLocalLogs(logs);
+    if (getLocalAdmin()) {
+      set(ref("logs/"), logs).catch((err) => {
+        toast.error(`클라우드 로그 저장 실패: ${err?.code || err?.message || err}`);
+    });
+    }
+  }, [logs]);
+
+  // ⏱️ 10분 무활동 자동 로그아웃
   useEffect(() => {
     if (!isAdmin) return;
 
