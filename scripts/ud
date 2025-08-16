@@ -1,62 +1,47 @@
+# scripts/ud
 #!/usr/bin/env bash
 # chmod +x scripts/ud <-- 작동 안할시 권한 부여!
-set -euo pipefail
+set -Eeuo pipefail
 
-say() { echo -e "▶ $*"; }
-die() { echo -e "❌ $*"; exit 1; }
+REPO_URL="https://x2okmiin.github.io/dokkaebi-inventory/#/"
 
-# 프로젝트 루트 확인
-[[ -f package.json ]] || die "package.json 이 있는 프로젝트 루트에서 실행하세요."
+echo "▶ 배포 시작…"
 
-# Git 저장소 확인
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Git 저장소가 아닙니다."
-
-# 버전 메시지 입력(인자 또는 프롬프트)
-VERSION="${1-}"
-if [[ -z "${VERSION}" ]]; then
-  read -rp "커밋 버전 메시지 입력 (예: v1.0.0): " VERSION
+# 1) 버전 입력 받기
+VER="${1:-}"
+if [[ -z "$VER" ]]; then
+  read -rp "버전(예: release v1.2.3): " VER
 fi
-[[ -n "${VERSION}" ]] || die "버전 메시지가 필요합니다."
-
-# 직전 커밋 메시지와 중복 방지
-LAST_MSG="$(git log -1 --pretty=%B 2>/dev/null || echo "")"
-if [[ "${LAST_MSG}" == "${VERSION}" ]]; then
-  echo "이미 진행한 업데이트 버전입니다.(전과 같은 이름 했을때)"
-  exit 0
+if [[ -z "$VER" ]]; then
+  echo "⚠️ 버전이 비었습니다."; exit 1
 fi
 
-# add → commit (변경없으면 빈 커밋으로 버전 스탬프)
-say "git add ."
+# 2) 같은 버전 태그가 이미 있으면 중단
+if git tag -l | grep -qx "v$VER"; then
+  echo "⛔ 이미 진행한 업데이트 버전입니다. (v$VER)"; exit 1
+fi
+
+# 3) add/commit
 git add .
-
-if git diff --cached --quiet && git diff --quiet; then
-  say "변경사항 없음: 빈 커밋으로 버전 스탬프 기록"
-  git commit --allow-empty -m "${VERSION}"
-else
-  say "커밋: ${VERSION}"
-  git commit -m "${VERSION}"
+if ! git commit -m "v$VER"; then
+  echo "ℹ️ 변경사항 없음 — 커밋 건너뜀"
 fi
 
-# push (현재 브랜치 상관없이 main으로)
-CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-say "push → origin main (현재 브랜치: ${CUR_BRANCH})"
-git push origin HEAD:main
+# 4) 태그 & push
+git tag -a "v$VER" -m "v$VER"
+git push origin main
+git push origin "v$VER"
 
-# build
-say "빌드 시작…"
-if npm run build; then
-  echo "(오류가 있습니다.)"
-  exit 1
-fi
+# 5) 빌드 (실패 시 즉시 중단)
+echo "▶ 빌드…"
+npm run build
 
-# deploy
-say "배포 시작…"
-if npm run deploy; then
-  echo "업데이트가 완료 되었습니다!"
-  echo "바로 접속하기:: https://x2okmiin.github.io/dokkaebi-inventory/#/"
-else
-  die "배포 실패"
-fi
+# 6) 배포 (package.json의 deploy 실행)
+echo "▶ 배포…"
+npm run deploy
+
+echo "✅ 업데이트가 완료되었습니다!"
+echo "🔗 바로 접속하기:: $REPO_URL"
 
 # 실행: npm run ud
 # 인자로 버전 설정: npm run ud -- v1.0.0
