@@ -282,6 +282,60 @@ function isValidPath(cat, sub, sub2) {
   return false;
 }
 
+// PATCH: src/App.js (Home 컴포넌트 - 경로 정규화 유틸 추가)
+
+// 키 비교용: 소문자 + 공백 제거 + 특수문자(&,/ 제거)
+function stripKey(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[&/]/g, "");
+}
+
+// 장소/카테고리/하위/최하위 값을 스키마 키로 정규화
+function canonLocName(loc) {
+  const found = locations.find((L) => stripKey(L) === stripKey(loc));
+  return found || loc;
+}
+function canonCatName(cat) {
+  const keys = Object.keys(subcategories);
+  const found = keys.find((k) => stripKey(k) === stripKey(cat));
+  // 흔한 표기 차이 몇 개 보정 (선택)
+  if (!found) {
+    const alt = {
+      "드론제어부": "드론 제어부",
+      "조종기개수": "조종기 개수",
+      "기체개수": "기체 개수",
+    }[stripKey(cat)];
+    if (alt) return alt;
+  }
+  return found || cat;
+}
+function canonSubName(cat, sub) {
+  const def = subcategories[cat];
+  if (!def) return sub;
+  const keys = Array.isArray(def) ? def : Object.keys(def);
+  // stripKey 기반 일치
+  const found = keys.find((k) => stripKey(k) === stripKey(sub));
+  // '프로펠라' → '프로펠러' 같은 철자 차이 보정 (선택)
+  if (!found && stripKey(sub) === "프로펠라") {
+    const alt = keys.find((k) => stripKey(k) === "프로펠러");
+    if (alt) return alt;
+  }
+  return found || sub;
+}
+function canonSub2Name(cat, sub, sub2) {
+  const def = subcategories[cat];
+  if (!def || Array.isArray(def)) return "";
+  const leaf = def[sub];
+  if (!leaf || Array.isArray(leaf)) return "";
+  const keys = Object.keys(leaf);
+  const found = keys.find((k) => stripKey(k) === stripKey(sub2));
+  // 예: '종이마스킹' ↔ '종이&마스킹'
+  return found || sub2;
+}
+
+
 // 업로드 버튼 클릭
 function handleImportClick(e) {
   e.preventDefault(); e.stopPropagation();
@@ -320,14 +374,30 @@ async function onImportFileChange(ev) {
     setInventory((prev) => {
       const next = JSON.parse(JSON.stringify(prev));
       for (const raw of rows) {
+        // src/App.js (Home.onImportFileChange - 경로 정규화 적용)
+
+        // 기존: const { loc, cat, sub, sub2, name, note, qty } = normalizeRow(raw);
+        // 아래처럼 정규화 값을 준비
         const { loc, cat, sub, sub2, name, note, qty } = normalizeRow(raw);
+        const cLoc  = canonLocName(loc);
+        const cCat  = canonCatName(cat);
+        const cSub  = canonSubName(cCat, sub);
+        const cSub2 = sub2 ? canonSub2Name(cCat, cSub, sub2) : "";
 
         // 장소/수량/이름 검증
-        if (!loc || !locations.includes(loc)) { invalid++; if (invalidSamples.length < 5) invalidSamples.push(`장소:${loc||"(빈)"}`); continue; }
-        if (!name || !Number.isFinite(qty) || qty <= 0) { invalid++; if (invalidSamples.length < 5) invalidSamples.push(`품목:${name||"(빈)"} 수량:${qty}`); continue; }
-        if (!isValidPath(cat, sub, sub2)) { invalid++; if (invalidSamples.length < 5) invalidSamples.push(`${cat||"(빈)"}>${sub||""}${sub2?">"+sub2:""}`); continue; }
+        if (!cLoc || !locations.includes(cLoc)) { /* ...그대로... */ }
+        if (!name || !Number.isFinite(qty) || qty <= 0) { /* ...그대로... */ }
 
-        const arr = ensureItems(next, loc, cat, sub, sub2 || undefined);
+        // 경로 검증은 정규화된 값으로!
+        if (!isValidPath(cCat, cSub, cSub2)) {
+          invalid++;
+          if (invalidSamples.length < 5)
+            invalidSamples.push(`${cat || "(빈)"}>${sub || ""}${sub2 ? ">" + sub2 : ""}`);
+          continue;
+        }
+
+        // 병합도 정규화된 값으로!
+        const arr = ensureItems(next, cLoc, cCat, cSub, cSub2 || undefined);
         const idx = arr.findIndex((it) => String(it.name).trim() === name);
         if (idx >= 0) {
           arr[idx].count = Math.max(0, Number(arr[idx].count || 0) + Number(qty));
