@@ -1,54 +1,58 @@
 # scripts/ud
 #!/usr/bin/env bash
-# chmod +x scripts/ud <-- 작동 안할시 권한 부여!
+# chmod +x scripts/ud <-- 작동 안할시 권한 얻기!
 set -Eeuo pipefail
 
 REPO_URL="https://x2okmiin.github.io/dokkaebi-inventory/#/"
 
 echo "▶ 배포 시작…"
 
-# 1) 버전 입력 받기
-VER="${1:-}"
-MSG="${2:-"chore(release): v$VER"}"   # 두 번째 인자로 커밋 메시지 받기
+# 1) 버전 입력/정규화
+VER="${1:-}"                      # 인자 1 = 버전 (0.1.3 또는 v0.1.3)
+if [[ -z "$VER" ]]; then
+  read -rp "버전 (예: 0.1.3 또는 v0.1.3): " VER
+fi
+VER="${VER#v}"                    # 사용자가 v 접두사 넣어도 제거
+if [[ -z "$VER" ]]; then
+  echo "⛔ 버전이 비었습니다."; exit 1
+fi
 
-git add .
-git commit -m "$MSG" || echo "변경 없음"
-
-git tag -a "v$VER" -m "v$VER"
-# v 붙이기 전에 검증 추가
+# 2) 형식 검증 (SemVer + 선택적 프리릴리즈)
 if [[ ! "$VER" =~ ^[0-9]+(\.[0-9]+){1,2}(-[0-9A-Za-z.-]+)?$ ]]; then
-  echo "⛔ 버전 형식이 올바르지 않습니다. 예: 0.1.3 또는 0.1.3-beta.1"
-  exit 1
+  echo "⛔ 버전 형식이 올바르지 않습니다. 예: 0.1.3 또는 0.1.3-beta.1"; exit 1
 fi
 
-if [[ -z "$VER" ]]; then
-  read -rp "버전(예: 1.2.3-release): " VER
-fi
-if [[ -z "$VER" ]]; then
-  echo "⚠️ 버전이 비었습니다."; exit 1
+TAG="v$VER"
+MSG="${2:-"chore(release): $TAG"}"   # 인자 2 = 커밋 메시지(옵션)
+
+# 3) 기존 태그 중복 체크(로컬/원격)
+git fetch --tags --quiet || true
+if git tag -l | grep -qx "$TAG"; then
+  echo "⛔ 이미 진행한 업데이트 버전입니다. ($TAG)"; exit 1
 fi
 
-# 2) 같은 버전 태그가 이미 있으면 중단
-if git tag -l | grep -qx "v$VER"; then
-  echo "⛔ 이미 진행한 업데이트 버전입니다. (v$VER)"; exit 1
+# 4) add/commit (변경 없으면 건너뜀)
+echo "▶ Git add & commit…"
+git add -A
+if git diff --cached --quiet; then
+  echo "ℹ️ 스테이지된 변경 없음 — 커밋 생략"
+else
+  git commit -m "$MSG"
 fi
 
-# 3) add/commit
-git add .
-if ! git commit -m "v$VER"; then
-  echo "ℹ️ 변경사항 없음 — 커밋 건너뜀"
-fi
+# 5) 태그 & push
+echo "▶ 태그 생성: $TAG"
+git tag -a "$TAG" -m "$TAG"
 
-# 4) 태그 & push
-git tag -a "v$VER" -m "v$VER"
+echo "▶ push…"
 git push origin main
-git push origin "v$VER"
+git push origin "$TAG"
 
-# 5) 빌드 (실패 시 즉시 중단)
+# 6) 빌드 (실패 시 중단)
 echo "▶ 빌드…"
 npm run build
 
-# 6) 배포 (package.json의 deploy 실행)
+# 7) 배포 (package.json의 deploy 실행)
 echo "▶ 배포…"
 npm run deploy
 
