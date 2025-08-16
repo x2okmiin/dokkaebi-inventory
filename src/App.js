@@ -235,6 +235,16 @@ function Home({
   }, [openPanel]);
 
   // 수정 패널 바깥 클릭/ESC 닫기 (버튼과 에디트 내부는 예외)
+  
+  // 팝업 열릴 때 모든 details를 강제로 펼치기
+useEffect(() => {
+  if (!openPanel) return;
+  // 다음 프레임에서 실행해야 DOM이 렌더된 뒤에 적용됨
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.popup details').forEach(d => (d.open = true));
+  });
+}, [openPanel]);
+
   useEffect(() => {
     const onDocClick = (e) => {
       if (e.target.closest(".item-edit") || e.target.closest(".btn-compact") || e.target.closest(".item-actions")) return;
@@ -904,31 +914,55 @@ function Home({
         {/* 장소 카드 */}
         {locations.map((loc) => (
           <div key={loc} className="card glass hover-rise" ref={(el) => (cardRefs.current[loc] = el)}>
-            <div className="card-head" onClick={() => setOpenPanel({ kind: "loc", loc })}>
+          <div className="card-head head-split">
+            <button
+              type="button"
+              className="head-zoom"
+              onClick={() => setOpenPanel({ kind: "loc", loc })}
+              title="확대보기"
+              aria-label={`${loc} 확대보기`}
+            >
               <h2 className="card-title">{loc}</h2>
+              <span className="head-hint">확대보기</span>
+            </button>
+            <div className="head-actions">
               <button
                 className="btn btn-primary"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleAddNewItem(loc);
-                }}
+                onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}
               >
                 +추가
               </button>
             </div>
-            <div className="card-body">{renderLocCardBody(loc)}</div>
           </div>
+            <div className="card-body">
+              {renderLocCardBody(loc)}
+            </div>
+         </div>
         ))}
+        
 
         {/* 전체 카드 (요약) */}
         <div className="card glass hover-rise card--summary" ref={(el) => (cardRefs.current["summary"] = el)}>
-          <div className="card-head" onClick={() => setOpenPanel({ kind: "summary" })}>
-            <h2 className="card-title">전체</h2>
-            <button className="btn btn-danger" onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}>
-              삭제
+          <div className="card-head head-split">
+            <button
+              type="button"
+              className="head-zoom"
+              onClick={() => setOpenPanel({ kind: "summary" })}
+              title="전체 확대보기"
+              aria-label="전체 확대보기"
+            >
+              <h2 className="card-title">전체</h2>
+              <span className="head-hint">확대보기</span>
             </button>
+            <div className="head-actions">
+              <button className="btn btn-danger" onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}>
+                /삭제
+              </button>
+            </div>
           </div>
-          <div className="card-body">{renderSummaryCardBody()}</div>
+            <div className="card-body">
+              {renderSummaryCardBody()}
+          </div>
         </div>
       </section>
 
@@ -1067,7 +1101,7 @@ function LogsPage({ logs, setLogs }) {
 
       <header className="topbar glass">
         <button className="btn btn-ghost" onClick={() => navigate("/")}>← 돌아가기</button>
-        <h1 className="logo">입출고 기록</h1>
+        <h1 className="logo">📘입출고 기록</h1>
 
         <div className="toolbar">
           <input className="search-input" type="text" value={itemKeyword} onChange={(e) => setItemKeyword(e.target.value)} placeholder="품목 검색 (부분 일치)" />
