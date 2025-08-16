@@ -1,74 +1,247 @@
-# 접속 링크
+````markdown
+# DOKKAEBI / INVENTORY  
+React 기반 드론 재고·입출고 관리 콘솔
 
-https://x2okmiin.github.io/dokkaebi-inventory/#/
+> 해시 라우팅 기반 정적 웹앱 · Firebase RTDB 연동 · GitHub Pages 배포  
+> 앱 헤더에 `DOKKAEBI/INVENTORY vX.Y.Z` 형식으로 버전 노출 (환경변수)
 
-# Getting Started with Create React App
+[▶️ 라이브 데모 바로가기](https://x2okmiin.github.io/dokkaebi-inventory/#/) · 문의: **gwdokkebinv@gmail.com**
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+---
 
-## Available Scripts
+## 목차
+- [소개](#소개)
+- [핵심 기능](#핵심-기능)
+- [데이터 스키마(불변)](#데이터-스키마불변)
+- [빠른 시작(로컬 개발)](#빠른-시작로컬-개발)
+- [Firebase 설정](#firebase-설정)
+- [빌드 & 배포(원클릭)](#빌드--배포원클릭)
+- [테스트 체크리스트(배포 전 1분)](#테스트-체크리스트배포-전-1분)
+- [장애 · 디버깅 가이드](#장애--디버깅-가이드)
+- [FAQ](#faq)
+- [프로젝트 원칙](#프로젝트-원칙)
+- [변경 이력(요약)](#변경-이력요약)
+- [라이선스](#라이선스)
 
-In the project directory, you can run:
+---
 
-### `npm start`
+## 소개
+**DOKKAEBI-INVENTORY**는 드론 동아리/팀 운영을 위한 **재고 관리 + 입·출고 기록** 콘솔입니다.  
+브라우저에서 동작하는 **정적 웹앱**으로, **Firebase Realtime Database**와 연동해 다중 사용자 환경에서도 실시간으로 동기화합니다.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- 배포: **GitHub Pages** (`/#/` 해시 라우팅)
+- 저장: **LocalStorage + Firebase RTDB** 동시 사용
+- 버전: 헤더에 `REACT_APP_VERSION` 노출 (배포 스크립트가 자동 기록)
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+---
 
-### `npm test`
+## 핵심 기능
+- **재고 관리 (CRUD)**: 장소/카테고리/품목 단위 관리, 검색 및 상세 팝업
+- **입·출고 기록 페이지**: `/#/logs`에서 필터, CSV/엑셀 내보내기
+- **검색 → 위치 이동**: 결과 클릭 시 해당 품목 위치로 스크롤, 필요한 `details` 자동 오픈
+- **반응형 UI**
+  - 720–1099px: 카드 2×2 고정
+  - ≥1100px: 3열, “전체” 카드 가운데 열 고정
+  - 모바일(1×1×1×1): 장소 카드 세로 스크롤 유지, 헤더 우측 로그아웃 버튼 보장
+- **상세 팝업 UX**: 팝업 열릴 때 내부 `details`를 모두 강제로 펼침
+- **관리자/로그인**
+  - 로그인 화면 진입 → 비밀번호 `2500` + `UID/이름` 입력(로컬 저장)
+  - 관리자 모드에서만 수정/삭제/추가 버튼 노출
+  - **10분 무활동 자동 로그아웃**
+- **📥 일괄 추가(베타)**
+  - `.xlsx`/`.csv`(첫 시트)로 **대량 반영**  
+  - **합산 모드**: 기존 수량에 업로드 수량 가산  
+  - **초기화 후 적용(덮어쓰기)**: 스키마만 남기고 0화 → 업로드 반영  
+  - **로그 미생성(의도된 설계)**: 재고만 변경  
+  - **동일 파일 재업로드 시 또 증가**하므로 주의  
+  - 스펙/규칙은 아래 [FAQ](#faq) 참조
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+---
 
-### `npm run build`
+## 데이터 스키마(불변)
+- **장소(3고정)**: `동아리방`, `비행장`, `교수님방`
+- **계층 구조**: `장소 → 상위 → 하위 → (최하위) → 품목배열`
+  - 리프는 **항상 배열**  
+- **카테고리 예시**
+  - `공구`: `[수리, 납땜 용품, 드라이버, 그외 공구]` (2단)
+  - `소모품`: 일부 3단 (예: `펜타 가드 → {새거, 중고, 기타}`, `테이프 → {필라멘트, 양면, 종이&마스킹, 절연, 그외 테이프}` 등)
+  - `드론 제어부`: `[FC, FC ESC 연결선, ESC, 모터, 수신기, 콘덴서, 제어부 세트]` (2단)
+  - `조종기 개수` / `기체 개수`: `[학교, 개인]` (2단)
+- **키 살균**: 저장 직전 Firebase 금지문자/빈 문자열 제거  
+  정규식: `/[.#$/[\]]/`  
+- **이름 일관성**: 품목 이름 변경 시 **모든 장소의 동명 품목**에 일괄 적용
+- **로그 병합 규칙**: 동일 키(장소|경로|품목|IN/OUT)는 **1시간 이내 변경량** 합산
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+---
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## 빠른 시작(로컬 개발)
+> 환경: Ubuntu / Node.js 18+ 권장
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```bash
+# 1) 클론
+git clone https://github.com/x2okmiin/dokkaebi-inventory.git
+cd dokkaebi-inventory
 
-### `npm run eject`
+# 2) 의존성 설치
+npm i
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+# 3) 환경변수 작성 (.env.local)
+#   - 아래 'Firebase 설정' 참고
+#   - 최소: REACT_APP_VERSION=0.0.0-dev
+printf "REACT_APP_VERSION=0.0.0-dev\n" > .env.local
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+# 4) 개발 서버
+npm start
+# http://localhost:3000 에서 확인
+````
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+> **로그인 안내**: 첫 화면에서 비밀번호 `2500` + UID/이름 입력 → 관리자 토글 가능.
+> **해시 라우팅**이므로 개발/배포 모두 `/#/` 경로를 사용합니다.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+---
 
-## Learn More
+## Firebase 설정
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+`src/firebase.js`에 Firebase 프로젝트 설정을 입력하세요. (Realtime Database 사용)
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+필요한 값(예시 키 이름):
 
-### Code Splitting
+```
+apiKey
+authDomain
+databaseURL
+projectId
+storageBucket
+messagingSenderId
+appId
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+DB 트리 사용 규칙:
 
-### Analyzing the Bundle Size
+* `inventory/` : **set(전체 저장)**
+* `logs/` : **push / update / remove만** 사용
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+> **권장**: RTDB 보안 규칙은 “쓰기 최소화 정책”을 따르세요. (팀 정책/권한 구조에 맞춰 별도 설정)
 
-### Making a Progressive Web App
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+## 빌드 & 배포(원클릭)
 
-### Advanced Configuration
+본 레포는 **GitHub Pages**에 정적 배포하며, `scripts/ud` 스크립트로 **버전 기록 → 태그 → 빌드 → 배포**를 한 번에 수행합니다.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+```bash
+# 버전/태그/빌드/배포 원클릭
+npm run ud -- 1.2.3 "(release): v1.2.3"
+```
 
-### Deployment
+동작 요약
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+1. `package.json` 버전 업데이트 (`npm pkg set version`)
+2. `.env.local`에 `REACT_APP_VERSION=1.2.3` 기록
+3. Git 커밋/태그(`v1.2.3`) 및 푸시
+4. **한 번만** 빌드 → **gh-pages**로 배포
 
-### `npm run build` fails to minify
+주의사항
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+* 동일 태그가 있으면 **즉시 중단**
+* 스크립트 권한 문제 시: `chmod +x scripts/ud`
+* 해시 라우팅이므로 배포 URL은 `…/dokkaebi-inventory/#/`
+
+---
+
+## 테스트 체크리스트(배포 전 1분)
+
+1. **수정 패널** 버튼 4종(＋/－/✎/📝) 동작 & 카테고리 접힘 없음
+2. **팝업**: 열자마자 내부 `details` 전부 펼침, 스크롤 부드러움
+3. **그리드**: 720–1099px 2×2 / ≥1100px 3열 + “전체” 가운데 고정
+4. **검색 집계**: 결과 클릭 시 위치 이동, 합계·장소별 수량 일치
+5. **재고 Excel 내보내기**: 시트 하단 품목별 합계 포함
+6. **기록 페이지**: 필터/내보내기 정상, 병합 룰(1시간) 검증
+7. **일괄 추가(베타)**:
+
+   * 합산 모드: 기존 수량 + 업로드 수량
+   * 초기화 후 적용: 0화 후 업로드 반영
+   * **로그 미생성** 확인
+   * 같은 파일 재업로드 시 **또 증가** 안내
+8. **Firebase 저장**: 키 살균 경고만, 오류 없이 set 완료
+9. **모바일(1×1×1×1)**: 장소 카드 스크롤/로그아웃 버튼 노출
+10. **자동 로그아웃**: 관리자 로그인 후 10분 무활동 시 동작
+
+---
+
+## 장애 · 디버깅 가이드
+
+* **A. Firebase set 실패: “invalid key () … inventory …”**
+  원인: 빈 문자열/금지문자 키 존재 → 저장 직전 **키 살균** 수행 필요
+  정규식: `/[.#$/[\]]/`
+* **B. ESLint `no-useless-escape` 경고**
+  정규식 리터럴에서 불필요 이스케이프 제거
+* **C. 모바일에서 장소 스크롤/로그아웃 버튼 미표시**
+  `.card-body{overflow:auto}` 유지, 헤더 버튼 조건 노출 확인
+* **D. 팝업에서 카테고리 접힘**
+  팝업 오픈 시 `requestAnimationFrame`으로 모든 `details.open = true`
+* **E. TS/ESLint 파서 에러(Unexpected token, stray brace 등)**
+  JSX 블록 내 여분 중괄호/괄호 제거
+* **F. `ud` 중복 빌드/태그 충돌**
+  빌드 라인은 **단 한 번**, 태그 중복 시 중단
+
+---
+
+## FAQ
+
+**Q1. 일괄 추가(베타) 사용 시 로그가 안 남아요.**
+A. 설계 의도입니다. 대량 정합 맞춤용이므로 **재고만 변경**합니다.
+
+**Q2. 같은 파일을 또 올렸더니 다시 수량이 늘었습니다.**
+A. 네, **합산 모드**는 업로드 시마다 가산됩니다. 의도된 동작입니다.
+
+**Q3. 업로드 파일 규칙이 있나요?**
+A. 네, `.xlsx`/`.csv`(첫 시트). **권장 헤더**:
+`장소, 상위카테고리, 하위카테고리, 최하위카테고리, 품목명, 수량, 메모`
+
+* **2단 카테고리**(예: 공구/드론 제어부): `최하위카테고리`는 **빈칸**
+* **3단 카테고리**(예: 소모품/펜타 가드/새거): `하위`+`최하위` 모두 필요
+* `하위카테고리`가 `A/B` 형식이면 자동으로 `A`→하위, `B`→최하위 분리
+* **수량 > 0**만 반영(0/빈칸/NaN 무시)
+* 스키마 밖 경로/장소/이름은 **무시(토스트 안내)**
+* 일부 **동의어 자동 보정**(예: `펜타가드`→`펜타 가드`, `종이마스킹`→`종이&마스킹` 등)
+
+**Q4. 기록 페이지는 어디 있나요?**
+A. 우측 상단 **📘 기록** 버튼 또는 `/#/logs` 경로로 접근하세요.
+
+**Q5. 관리자 모드 비밀번호가 뭔가요?**
+A. `2500`입니다. UID/이름을 함께 정확히 기입해주세요.
+
+---
+
+## 프로젝트 원칙
+
+* **대공사 리팩터링 금지**: 기존 구조/이벤트 흐름 유지가 최우선
+* **최소 변경 원칙**: 패치 범위 최소화, 전체 파일 교체 시에도 로직 보존
+* **상태 불변성**: 재고/로그 변경 시 깊은 복사 후 수정
+* **이벤트 전파 제어**: 수정 패널 내부 버튼은 `preventDefault + stopPropagation` 필수
+* **보안/운영**: RTDB 쓰기 최소화, LocalStorage 사용 고지, 의존성 주기적 업데이트
+
+---
+
+## 변경 이력(요약)
+
+**2025-08-17 · v2**
+
+* 📦 **일괄 추가(베타)** 정식 문서화(파일 스펙/동의어/2·3단/초기화 모드)
+* 🧹 **Firebase 키 살균**(빈키·금지문자 제거) 안전장치 추가
+* 🏷️ **버전 표기** 도입(`REACT_APP_VERSION` 자동 반영, `ud` 스크립트 정리)
+* 📱 모바일 스크롤/로그아웃/팝업 오픈 회귀 테스트 규칙 보강
+* ✅ 테스트 체크리스트·장애 대응·배포 스크립트 주의사항 업데이트
+
+> 배포 커맨드 예시
+> `npm run ud -- 2.0.0 "(release): v2.0.0"`
+
+---
+
+## 라이선스
+
+이 레포의 라이선스는 팀 결정에 따릅니다. (예: MIT/BSD-3-Clause/GPL-3.0 등)
+`LICENSE` 파일을 추가해 명시하세요.
+
+```
