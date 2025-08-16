@@ -1,15 +1,15 @@
 {
   "files": {
     "main.css": "/dokkaebi-inventory/static/css/main.6694cfc3.css",
-    "main.js": "/dokkaebi-inventory/static/js/main.17ffa378.js",
+    "main.js": "/dokkaebi-inventory/static/js/main.e9a2c7ad.js",
     "static/js/453.a8a442b9.chunk.js": "/dokkaebi-inventory/static/js/453.a8a442b9.chunk.js",
     "index.html": "/dokkaebi-inventory/index.html",
     "main.6694cfc3.css.map": "/dokkaebi-inventory/static/css/main.6694cfc3.css.map",
-    "main.17ffa378.js.map": "/dokkaebi-inventory/static/js/main.17ffa378.js.map",
+    "main.e9a2c7ad.js.map": "/dokkaebi-inventory/static/js/main.e9a2c7ad.js.map",
     "453.a8a442b9.chunk.js.map": "/dokkaebi-inventory/static/js/453.a8a442b9.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.6694cfc3.css",
-    "static/js/main.17ffa378.js"
+    "static/js/main.e9a2c7ad.js"
   ]
 }
