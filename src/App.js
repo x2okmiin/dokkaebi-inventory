@@ -205,6 +205,143 @@ function Home({
   const [openPanel, setOpenPanel] = useState(null);
   const [editKey, setEditKey] = useState(null);
 
+  // PATCH: src/App.js  (Home 컴포넌트 내부 normalizeRow 교체)
+
+// 시트 → JSON 로우 파싱(헤더 유연 매핑 강화)
+function normalizeRow(r) {
+  const get = (...keys) => {
+    for (const k of keys) {
+      if (r[k] !== undefined) return r[k];
+      // 공백/대소문자/유사 키 허용
+      const rk = Object.keys(r).find((x) => String(x).trim().toLowerCase() === String(k).trim().toLowerCase());
+      if (rk && r[rk] !== undefined) return r[rk];
+    }
+    return "";
+  };
+
+  // 헤더 시노님(동의어) 세트
+  const loc = String(get("장소","위치","place","Place","LOCATION","location")).trim();
+  const cat = String(get("상위카테고리","대분류","카테고리","Category","category")).trim();
+  const sub = String(get("하위카테고리","중분류","Subcategory","subcategory")).trim();
+  const sub2 = String(get("최하위카테고리","소분류","SubSubcategory","subsubcategory","Sub2","소분류(필요시)")).trim();
+  const name = String(get("품목명","품명","항목","아이템","item","Item","품목")).trim();
+  const note = String(get("메모","비고","설명","Note","note","비고(선택)")).trim();
+
+  let qty = get("수량","개수","수량(개)","수 량","수량합계","Qty","qty","Quantity","quantity");
+  qty = Number(qty ?? 0);
+
+  return { loc, cat, sub, sub2, name, note, qty };
+}
+
+// PATCH: src/App.js (Home 컴포넌트 내 - 일괄 추가 베타 핵심 로직)
+
+// 업로드용 파일 입력 ref
+const importInputRef = useRef(null);
+
+// 카테고리 경로 유효성 검사
+function isValidPath(cat, sub, sub2) {
+  const def = subcategories[cat];
+  if (!def) return false;
+
+  if (Array.isArray(def)) {
+    // 2단 (상위-하위)
+    return !!sub && def.includes(sub) && (!sub2 || sub2 === "");
+  }
+
+  if (def && typeof def === "object") {
+    if (!sub || !Object.prototype.hasOwnProperty.call(def, sub)) return false;
+    const leaf = def[sub];
+    if (Array.isArray(leaf)) {
+      // 2단(객체의 값이 배열이면 최하위 없음)
+      return !sub2 || sub2 === "";
+    }
+    if (leaf && typeof leaf === "object") {
+      // 3단
+      return !!sub2 && Object.prototype.hasOwnProperty.call(leaf, sub2);
+    }
+  }
+  return false;
+}
+
+// 업로드 버튼 클릭
+function handleImportClick(e) {
+  e.preventDefault(); e.stopPropagation();
+  const ok = window.confirm(
+    "⚠️ 일괄 추가(베타)\n\n" +
+    "- 로그를 남기지 않고 재고만 변경합니다.\n" +
+    "- 실행 전 '재고 Excel 내보내기'로 백업을 권장합니다.\n\n" +
+    "계속할까요?"
+  );
+  if (!ok) return;
+  importInputRef.current?.click();
+}
+
+// 파일 업로드 후 병합
+async function onImportFileChange(ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  const file = ev.target.files?.[0];
+  ev.target.value = ""; // 같은 파일 반복 업로드 허용
+  setDataMenuOpen(false);
+  if (!file) return;
+
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+    if (!rows.length) {
+      toast.error("업로드 시트가 비어있습니다.");
+      return;
+    }
+
+    let applied = 0, added = 0, increased = 0, invalid = 0;
+    const invalidSamples = [];
+
+    setInventory((prev) => {
+      const next = JSON.parse(JSON.stringify(prev));
+      for (const raw of rows) {
+        const { loc, cat, sub, sub2, name, note, qty } = normalizeRow(raw);
+
+        // 장소/수량/이름 검증
+        if (!loc || !locations.includes(loc)) { invalid++; if (invalidSamples.length < 5) invalidSamples.push(`장소:${loc||"(빈)"}`); continue; }
+        if (!name || !Number.isFinite(qty) || qty <= 0) { invalid++; if (invalidSamples.length < 5) invalidSamples.push(`품목:${name||"(빈)"} 수량:${qty}`); continue; }
+        if (!isValidPath(cat, sub, sub2)) { invalid++; if (invalidSamples.length < 5) invalidSamples.push(`${cat||"(빈)"}>${sub||""}${sub2?">"+sub2:""}`); continue; }
+
+        const arr = ensureItems(next, loc, cat, sub, sub2 || undefined);
+        const idx = arr.findIndex((it) => String(it.name).trim() === name);
+        if (idx >= 0) {
+          arr[idx].count = Math.max(0, Number(arr[idx].count || 0) + Number(qty));
+          if (note) arr[idx].note = note;
+          increased++; applied++;
+        } else {
+          arr.push({ name, count: Number(qty), ...(note ? { note } : {}) });
+          added++; applied++;
+        }
+      }
+      return next;
+    });
+
+    toast.success(`일괄 추가 완료: 적용 ${applied}건 (신규 ${added}, 증가 ${increased}) / 무시 ${invalid}건`);
+    if (invalid) {
+      console.warn("[Import skipped examples]", invalidSamples);
+      toast((t) => (
+        <div>
+          일부 행이 무시되었습니다. (총 {invalid}건)
+          <div style={{opacity:.8, marginTop:4, fontSize:12}}>
+            예시: {invalidSamples.join(" / ")}
+          </div>
+          <button className="btn btn-ghost" onClick={() => toast.dismiss(t.id)}>닫기</button>
+        </div>
+      ), { duration: 6000 });
+    }
+  } catch (err) {
+    console.error(err);
+    toast.error(`가져오기 실패: ${err?.message || String(err)}`);
+  }
+}
+
+
   // 동기화 인디케이터
   useEffect(() => {
     setSyncing(true);
@@ -821,16 +958,40 @@ useEffect(() => {
             >
               📦 데이터
             </button>
-            {dataMenuOpen && (
-              <div className="menu" role="menu">
-                <button className="menu-item" onClick={() => { exportInventoryExcel(); setDataMenuOpen(false); }}>
-                  📤 재고 Excel 내보내기
+          {/*PATCH: src/App.js (데이터 메뉴 JSX 교체: 삼항/중괄호 정정 + 숨김 input 위치 고정)*/}
+          {dataMenuOpen && (
+            <div className="menu" role="menu" onClick={(e) => e.stopPropagation()}>
+              <button
+                className="menu-item"
+                onClick={() => { exportInventoryExcel(); setDataMenuOpen(false); }}
+              >
+                📤 재고 Excel 내보내기
+              </button>
+
+              {isAdmin ? (
+                <button
+                  className="menu-item"
+                  onClick={handleImportClick}
+                  title="CSV/XLSX에서 재고를 일괄 추가합니다(로그 미생성)"
+                >
+                  📥 일괄 추가 (베타)
                 </button>
-                <button className="menu-item disabled" disabled title="베타: 아직 미구현">
+              ) : (
+                <button className="menu-item disabled" disabled title="관리자 전용">
                   📥 가져오기 (베타)
                 </button>
-              </div>
-            )}
+              )}
+
+              {/* 숨김 파일 입력 — 삼항 밖, 메뉴 내부에 고정 */}
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".xlsx,.csv"
+                style={{ display: "none" }}
+                onChange={onImportFileChange}
+              />
+            </div>
+          )}
           </div>
 
           <button className="btn btn-secondary" onClick={() => navigate("/logs")}>
