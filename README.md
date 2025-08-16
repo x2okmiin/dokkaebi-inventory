@@ -1,74 +1,94 @@
-# 접속 링크
+# DOKKAEBI / INVENTORY  
+React 기반 드론 재고·입출고 관리 콘솔
 
-https://x2okmiin.github.io/dokkaebi-inventory/#/
+> 해시 라우팅 기반 정적 웹앱 · Firebase RTDB 연동 · GitHub Pages 배포  
+> 앱 헤더에 `DOKKAEBI/INVENTORY vX.Y.Z` 형식으로 버전 노출 (환경변수)
 
-# Getting Started with Create React App
+[▶️ 라이브 데모 바로가기](https://x2okmiin.github.io/dokkaebi-inventory/#/) · 문의: **gwdokkebinv@gmail.com**
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+---
 
-## Available Scripts
+## 목차
+- [소개](#소개)
+- [핵심 기능](#핵심-기능)
+- [데이터 스키마(불변)](#데이터-스키마불변)
+- [빠른 시작(로컬 개발)](#빠른-시작로컬-개발)
+- [Firebase 설정](#firebase-설정)
+- [빌드 & 배포(원클릭)](#빌드--배포원클릭)
+- [테스트 체크리스트(배포 전 1분)](#테스트-체크리스트배포-전-1분)
+- [장애 · 디버깅 가이드](#장애--디버깅-가이드)
+- [FAQ](#faq)
+- [프로젝트 원칙](#프로젝트-원칙)
+- [변경 이력(요약)](#변경-이력요약)
+- [라이선스](#라이선스)
 
-In the project directory, you can run:
+---
 
-### `npm start`
+## 소개
+**DOKKAEBI-INVENTORY**는 드론 동아리/팀 운영을 위한 **재고 관리 + 입·출고 기록** 콘솔입니다.  
+브라우저에서 동작하는 **정적 웹앱**으로, **Firebase Realtime Database**와 연동해 다중 사용자 환경에서도 실시간으로 동기화합니다.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- 배포: **GitHub Pages** (`/#/` 해시 라우팅)
+- 저장: **LocalStorage + Firebase RTDB** 동시 사용
+- 버전: 헤더에 `REACT_APP_VERSION` 노출 (배포 스크립트가 자동 기록)
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+---
 
-### `npm test`
+## 핵심 기능
+- **재고 관리 (CRUD)**: 장소/카테고리/품목 단위 관리, 검색 및 상세 팝업
+- **입·출고 기록 페이지**: `/#/logs`에서 필터, CSV/엑셀 내보내기
+- **검색 → 위치 이동**: 결과 클릭 시 해당 품목 위치로 스크롤, 필요한 `details` 자동 오픈
+- **반응형 UI**
+  - 720–1099px: 카드 2×2 고정
+  - ≥1100px: 3열, “전체” 카드 가운데 열 고정
+  - 모바일(1×1×1×1): 장소 카드 세로 스크롤 유지, 헤더 우측 로그아웃 버튼 보장
+- **상세 팝업 UX**: 팝업 열릴 때 내부 `details`를 모두 강제로 펼침
+- **관리자/로그인**
+  - 로그인 화면 진입 → 비밀번호 `2500` + `UID/이름` 입력(로컬 저장)
+  - 관리자 모드에서만 수정/삭제/추가 버튼 노출
+  - **10분 무활동 자동 로그아웃**
+- **📥 일괄 추가(베타)**
+  - `.xlsx`/`.csv`(첫 시트)로 **대량 반영**  
+  - **합산 모드**: 기존 수량에 업로드 수량 가산  
+  - **초기화 후 적용(덮어쓰기)**: 스키마만 남기고 0화 → 업로드 반영  
+  - **로그 미생성(의도된 설계)**: 재고만 변경  
+  - **동일 파일 재업로드 시 또 증가**하므로 주의  
+  - 스펙/규칙은 아래 [FAQ](#faq) 참조
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+---
 
-### `npm run build`
+## 데이터 스키마(불변)
+- **장소(3고정)**: `동아리방`, `비행장`, `교수님방`
+- **계층 구조**: `장소 → 상위 → 하위 → (최하위) → 품목배열`
+  - 리프는 **항상 배열**  
+- **카테고리 예시**
+  - `공구`: `[수리, 납땜 용품, 드라이버, 그외 공구]` (2단)
+  - `소모품`: 일부 3단 (예: `펜타 가드 → {새거, 중고, 기타}`, `테이프 → {필라멘트, 양면, 종이&마스킹, 절연, 그외 테이프}` 등)
+  - `드론 제어부`: `[FC, FC ESC 연결선, ESC, 모터, 수신기, 콘덴서, 제어부 세트]` (2단)
+  - `조종기 개수` / `기체 개수`: `[학교, 개인]` (2단)
+- **키 살균**: 저장 직전 Firebase 금지문자/빈 문자열 제거  
+  정규식: `/[.#$/[\]]/`  
+- **이름 일관성**: 품목 이름 변경 시 **모든 장소의 동명 품목**에 일괄 적용
+- **로그 병합 규칙**: 동일 키(장소|경로|품목|IN/OUT)는 **1시간 이내 변경량** 합산
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+---
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## 빠른 시작(로컬 개발)
+> 환경: Ubuntu / Node.js 18+ 권장
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```bash
+# 1) 클론
+git clone https://github.com/x2okmiin/dokkaebi-inventory.git
+cd dokkaebi-inventory
 
-### `npm run eject`
+# 2) 의존성 설치
+npm i
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+# 3) 환경변수 작성 (.env.local)
+#   - 아래 'Firebase 설정' 참고
+#   - 최소: REACT_APP_VERSION=0.0.0-dev
+printf "REACT_APP_VERSION=0.0.0-dev\n" > .env.local
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+# 4) 개발 서버
+npm start
+# http://localhost:3000 에서 확인
