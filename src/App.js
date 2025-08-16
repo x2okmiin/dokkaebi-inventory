@@ -20,6 +20,13 @@ import { Toaster, toast } from "react-hot-toast";
 /* Firebase 래퍼 */
 import { ref, set, onValue, push, update, remove } from "./firebase";
 
+// PATCH: src/App.js (imports 아래, 파일 최상단 근처에 추가)
+const APP_VERSION =
+  process.env.REACT_APP_VERSION ||
+  localStorage.getItem("do-kkae-bi-app-version") ||
+  "dev";
+
+
 /* =========================
    1) 카테고리/스키마 정의
    ========================= */
@@ -207,32 +214,44 @@ function Home({
 
   // PATCH: src/App.js  (Home 컴포넌트 내부 normalizeRow 교체)
 
-// 시트 → JSON 로우 파싱(헤더 유연 매핑 강화)
+// 시트 → JSON 로우 파싱(헤더 유연 + 'nan' 등 빈값 처리)
 function normalizeRow(r) {
   const get = (...keys) => {
     for (const k of keys) {
       if (r[k] !== undefined) return r[k];
-      // 공백/대소문자/유사 키 허용
-      const rk = Object.keys(r).find((x) => String(x).trim().toLowerCase() === String(k).trim().toLowerCase());
+      // 공백/대소문자 무시한 키 매칭
+      const rk = Object.keys(r).find(
+        (x) => String(x).trim().toLowerCase() === String(k).trim().toLowerCase()
+      );
       if (rk && r[rk] !== undefined) return r[rk];
     }
     return "";
   };
 
-  // 헤더 시노님(동의어) 세트
-  const loc = String(get("장소","위치","place","Place","LOCATION","location")).trim();
-  const cat = String(get("상위카테고리","대분류","카테고리","Category","category")).trim();
-  const sub = String(get("하위카테고리","중분류","Subcategory","subcategory")).trim();
-  const sub2 = String(get("최하위카테고리","소분류","SubSubcategory","subsubcategory","Sub2","소분류(필요시)")).trim();
-  const name = String(get("품목명","품명","항목","아이템","item","Item","품목")).trim();
-  const note = String(get("메모","비고","설명","Note","note","비고(선택)")).trim();
+  // 빈값/NaN 토큰 정리
+  const clean = (v) => {
+    if (v === null || v === undefined) return "";
+    let s = String(v).trim();
+    if (!s) return "";
+    const L = s.toLowerCase();
+    // 엑셀/판다스에서 생기는 토큰들을 빈값으로 간주
+    if (L === "nan" || L === "na" || L === "n/a" || L === "-") return "";
+    return s;
+  };
 
-  let qty = get("수량","개수","수량(개)","수 량","수량합계","Qty","qty","Quantity","quantity");
-  qty = Number(qty ?? 0);
+  const loc  = clean(get("장소","위치","place","Place","LOCATION","location"));
+  const cat  = clean(get("상위카테고리","대분류","카테고리","Category","category"));
+  const sub  = clean(get("하위카테고리","중분류","Subcategory","subcategory"));
+  const sub2 = clean(get("최하위카테고리","소분류","SubSubcategory","subsubcategory","Sub2","소분류(필요시)"));
+  const name = clean(get("품목명","품명","항목","아이템","item","Item","품목"));
+  const note = clean(get("메모","비고","설명","Note","note","비고(선택)"));
+
+  let qtyRaw = get("수량","개수","수량(개)","수 량","수량합계","Qty","qty","Quantity","quantity");
+  let qty = Number(qtyRaw ?? 0);
+  if (!Number.isFinite(qty)) qty = 0;
 
   return { loc, cat, sub, sub2, name, note, qty };
 }
-
 // PATCH: src/App.js (Home 컴포넌트 내 - 일괄 추가 베타 핵심 로직)
 
 // 업로드용 파일 입력 ref
@@ -933,12 +952,28 @@ useEffect(() => {
     <main className="stage main">
       <FixedBg src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`} overlay="rgba(0,0,0,.18)" />
       <NeonBackdrop />
-
       <header className="topbar glass">
-        <h1 className="logo">
-          <span className="glow-dot" /> DOKKEBI<span className="thin">/</span>INVENTORY
-        </h1>
-
+      {/* PATCH: src/App.js (Home 헤더 타이틀 교체)*/}
+      <h1 className="logo">
+        <span className="glow-dot" /> DOKKEBI<span className="thin">/</span>INVENTORY
+        <button
+          type="button"
+          className="ver-chip"
+          title={`버전: ${APP_VERSION}${isAdmin ? " (더블클릭하여 라벨 변경)" : ""}`}
+          onDoubleClick={() => {
+            if (!isAdmin) return;
+            const next = prompt(
+              "버전 표시에 사용할 라벨을 입력하세요 (예: 1.0.5):",
+              localStorage.getItem("do-kkae-bi-app-version") || APP_VERSION
+            );
+            if (next === null) return;
+            localStorage.setItem("do-kkae-bi-app-version", String(next).trim());
+            window.location.reload();
+          }}
+        >
+          v{APP_VERSION}
+        </button>
+      </h1>
         <div className="toolbar">
           <input
             className="search-input"

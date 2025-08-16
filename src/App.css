@@ -839,3 +839,24 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
     max-height: none;
   }
 }
+/* PATCH: src/App.css (파일 맨 아래 추가) */
+.ver-chip{
+  display:inline-block;
+  margin-left:8px;
+  padding:0 5px;
+  height:22px;
+  line-height:2px;
+  border:1px solid #243056;
+  border-radius:999px;
+  font-size:.82rem;
+  background:rgba(10,16,35,.55);
+  color:#aee6ff;
+  letter-spacing:.2px;
+  cursor:default;
+  vertical-align:middle;
+}
+.ver-chip:hover{ filter:brightness(1.08); }
+.ver-chip:focus{ outline:2px solid #53ffe9; outline-offset:2px; }
+@media (max-width:480px){
+  .ver-chip{ font-size:.78rem; }
+}

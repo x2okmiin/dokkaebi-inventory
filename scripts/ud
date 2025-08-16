@@ -1,6 +1,6 @@
 # scripts/ud
 #!/usr/bin/env bash
-# chmod +x scripts/ud <-- 작동 안할시 권한 얻기!
+# chmod +x scripts/ud  <-- 권한 없으면 한 번만 실행
 set -Eeuo pipefail
 
 REPO_URL="https://x2okmiin.github.io/dokkaebi-inventory/#/"
@@ -8,37 +8,38 @@ REPO_URL="https://x2okmiin.github.io/dokkaebi-inventory/#/"
 echo "▶ 배포 시작…"
 
 # 1) 버전 입력/정규화
-VER="${1:-}"                      # 인자 1 = 버전 (0.1.3 또는 v0.1.3)
+VER="${1:-}"   # 인자1 = 1.0.6 또는 v1.0.6
 if [[ -z "$VER" ]]; then
-  read -rp "버전 (예: 예: 0.1.3 또는 0.1.3-beta.1): " VER
+  read -rp "버전 (예: 1.0.6 또는 1.0.6-beta.1): " VER
 fi
-VER="${VER#v}"                    # 사용자가 v 접두사 넣어도 제거
+VER="${VER#v}"  # v 접두 제거
 if [[ -z "$VER" ]]; then
   echo "⛔ 버전이 비었습니다."; exit 1
 fi
 
 # 2) 형식 검증 (SemVer + 선택적 프리릴리즈)
 if [[ ! "$VER" =~ ^[0-9]+(\.[0-9]+){1,2}(-[0-9A-Za-z.-]+)?$ ]]; then
-  echo "⛔ 버전 형식이 올바르지 않습니다. 예: 0.1.3 또는 0.1.3-beta.1"; exit 1
+  echo "⛔ 버전 형식이 올바르지 않습니다. 예: 1.0.6 또는 1.0.6-beta.1"; exit 1
 fi
 
 TAG="v$VER"
-MSG="${2:-"(release): $TAG"}"   # 인자 2 = 커밋 메시지(옵션)
+MSG="${2:-"chore(release): $TAG"}"
 
-# 3) 기존 태그 중복 체크(로컬/원격)
+# 3) 기존 태그 중복 체크
 git fetch --tags --quiet || true
 if git tag -l | grep -qx "$TAG"; then
-  echo "⛔ 이미 진행한 업데이트 버전입니다. ($TAG)"; exit 1
+  echo "⛔ 이미 존재하는 태그입니다: $TAG"; exit 1
 fi
-# 4) package.json 버전 반영 (+ 앱에서 표시하고 싶으면 .env.local도 갱신)
-npm pkg set version="$VER"
-printf "REACT_APP_VERSION=%s\n" "$VER" > .env.local
 
-# 5) add/commit (변경 없으면 건너뜀)
+# 4) package.json 버전 반영 (+ 선택: .env.local 업데이트)
+npm pkg set version="$VER"
+printf "REACT_APP_VERSION=%s\n" "$VER" > .env.local   # 깃에 안 올라가도 됨(보통 .gitignore)
+
+# 5) add/commit (변경 없으면 생략)
 echo "▶ Git add & commit…"
 git add -A
 if git diff --cached --quiet; then
-  echo "ℹ️ 스테이지된 변경 없음 — 커밋 생략"
+  echo "ℹ️ 스테이지 변경 없음 — 커밋 생략"
 else
   git commit -m "$MSG"
 fi
@@ -51,16 +52,18 @@ echo "▶ push…"
 git push origin main
 git push origin "$TAG"
 
-# 7) 빌드 (실패 시 중단)
-echo "▶ 빌드…"
-npm run build
+# 7) 빌드 (환경변수 주입)
+echo "▶ 빌드… (REACT_APP_VERSION=$VER)"
+REACT_APP_VERSION="$VER" npm run build
 
-# 8) 배포 (package.json의 deploy 실행)
+# 8) 배포
 echo "▶ 배포…"
-npm run deploy
+# 만약 package.json에 "predeploy": "npm run build" 가 있다면
+# 배포 과정에서 다시 빌드가 돌 수 있으므로 아래처럼도 안전함:
+REACT_APP_VERSION="$VER" npm run deploy
 
-echo "✅ 업데이트가 완료되었습니다!"
-echo "🔗 바로 접속하기:: $REPO_URL"
+echo "✅ 업데이트가 완료되었습니다!
+
 
 # 실행: npm run ud
 # 인자로 버전 설정: npm run ud -- v1.0.0
