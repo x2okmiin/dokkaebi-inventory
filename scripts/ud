@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# chmod +x scripts/ud <-- 작동 안할시 권한 부여!
+set -euo pipefail
+
+say() { echo -e "▶ $*"; }
+die() { echo -e "❌ $*"; exit 1; }
+
+# 프로젝트 루트 확인
+[[ -f package.json ]] || die "package.json 이 있는 프로젝트 루트에서 실행하세요."
+
+# Git 저장소 확인
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Git 저장소가 아닙니다."
+
+# 버전 메시지 입력(인자 또는 프롬프트)
+VERSION="${1-}"
+if [[ -z "${VERSION}" ]]; then
+  read -rp "커밋 버전 메시지 입력 (예: v1.0.0): " VERSION
+fi
+[[ -n "${VERSION}" ]] || die "버전 메시지가 필요합니다."
+
+# 직전 커밋 메시지와 중복 방지
+LAST_MSG="$(git log -1 --pretty=%B 2>/dev/null || echo "")"
+if [[ "${LAST_MSG}" == "${VERSION}" ]]; then
+  echo "이미 진행한 업데이트 버전입니다.(전과 같은 이름 했을때)"
+  exit 0
+fi
+
+# add → commit (변경없으면 빈 커밋으로 버전 스탬프)
+say "git add ."
+git add .
+
+if git diff --cached --quiet && git diff --quiet; then
+  say "변경사항 없음: 빈 커밋으로 버전 스탬프 기록"
+  git commit --allow-empty -m "${VERSION}"
+else
+  say "커밋: ${VERSION}"
+  git commit -m "${VERSION}"
+fi
+
+# push (현재 브랜치 상관없이 main으로)
+CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+say "push → origin main (현재 브랜치: ${CUR_BRANCH})"
+git push origin HEAD:main
+
+# build
+say "빌드 시작…"
+if ! npm run build; then
+  echo "(오류가 있습니다.)"
+  exit 1
+fi
+
+# deploy
+say "배포 시작…"
+if npm run deploy; then
+  echo "업데이트가 완료 되었습니다!"
+  echo "바로 접속하기:: https://x2okmiin.github.io/dokkaebi-inventory/#/"
+else
+  die "배포 실패"
+fi
+
+# 실행: npm run ud
+# 인자로 버전 설정: npm run ud -- v1.0.0
