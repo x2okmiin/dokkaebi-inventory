@@ -10,7 +10,7 @@ echo "▶ 배포 시작…"
 # 1) 버전 입력 받기
 VER="${1:-}"
 if [[ -z "$VER" ]]; then
-  read -rp "버전(예: release v1.2.3): " VER
+  read -rp "버전(예: 1.2.3-release): " VER
 fi
 if [[ -z "$VER" ]]; then
   echo "⚠️ 버전이 비었습니다."; exit 1
