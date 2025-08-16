@@ -63,6 +63,7 @@ echo "▶ 배포…"
 REACT_APP_VERSION="$VER" npm run deploy
 
 echo "✅ 업데이트가 완료되었습니다!"
+echo "🔗 바로 접속하기:: $REPO_URL"
 
 
 # 실행: npm run ud

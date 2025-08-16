@@ -187,6 +187,75 @@ function ensureItems(inv, loc, cat, sub, sub2) {
 }
 const subPath = (sub, sub2) => (sub2 ? `${sub}/${sub2}` : sub);
 
+// PATCH: src/App.js (공용 유틸 근처에 추가)
+function createEmptyInventory() {
+  const base = {};
+  locations.forEach((loc) => {
+    base[loc] = {};
+    Object.entries(subcategories).forEach(([cat, subs]) => {
+      base[loc][cat] = {};
+      if (Array.isArray(subs)) {
+        subs.forEach((sub) => (base[loc][cat][sub] = []));
+      } else {
+        Object.entries(subs).forEach(([sub, subs2]) => {
+          if (Array.isArray(subs2)) {
+            base[loc][cat][sub] = [];
+          } else {
+            base[loc][cat][sub] = {};
+            Object.keys(subs2).forEach((sub2) => (base[loc][cat][sub][sub2] = []));
+          }
+        });
+      }
+    });
+  });
+  return base;
+}
+
+/** Firebase 금지 문자를 포함하거나 빈 문자열인 키 제거 */
+const FORBIDDEN_KEY_RE = /[.#$/[\]]/;
+
+function sanitizeInventoryKeys(src) {
+  const inv = JSON.parse(JSON.stringify(src));
+  const bad = [];
+
+  const delIfBad = (obj, key, path) => {
+    if (!key || FORBIDDEN_KEY_RE.test(key)) {
+      delete obj[key];
+      bad.push(`${path}${key === "" ? "(empty)" : key}`);
+      return true;
+    }
+    return false;
+  };
+
+  Object.keys(inv || {}).forEach((loc) => {
+    if (delIfBad(inv, loc, "inventory/")) return;
+    const cats = inv[loc] || {};
+    Object.keys(cats).forEach((cat) => {
+      if (delIfBad(cats, cat, `inventory/${loc}/`)) return;
+      const subs = cats[cat] || {};
+      Object.keys(subs).forEach((sub) => {
+        if (delIfBad(subs, sub, `inventory/${loc}/${cat}/`)) return;
+        const node = subs[sub];
+        if (Array.isArray(node)) return;
+        if (node && typeof node === "object") {
+          Object.keys(node).forEach((sub2) => {
+            if (delIfBad(node, sub2, `inventory/${loc}/${cat}/${sub}/`)) return;
+            // 리프는 반드시 배열 보장
+            if (!Array.isArray(node[sub2])) node[sub2] = [];
+          });
+        } else {
+          // 구조가 망가졌으면 배열로 복구
+          subs[sub] = [];
+        }
+      });
+    });
+  });
+
+  return { inv, bad };
+}
+
+
+
 /* =========================
    5) 홈(재고) 화면
    ========================= */
@@ -202,6 +271,8 @@ function Home({
   userName,
 }) {
   
+    // PATCH: src/App.js (Home 컴포넌트 상단 지역 상태/refs 근처)
+  const resetAllRef = useRef(false);
   const navigate = useNavigate();
   const categoryRefs = useRef({});
   const cardRefs = useRef({});
@@ -337,6 +408,7 @@ function canonSub2Name(cat, sub, sub2) {
 
 
 // 업로드 버튼 클릭
+// PATCH: src/App.js (handleImportClick 교체)
 function handleImportClick(e) {
   e.preventDefault(); e.stopPropagation();
   const ok = window.confirm(
@@ -346,8 +418,16 @@ function handleImportClick(e) {
     "계속할까요?"
   );
   if (!ok) return;
+
+  // ⬇ 선택: 초기화 후 적용 모드
+  resetAllRef.current = window.confirm(
+    "전체 재고를 초기화(0)한 뒤 업로드 파일로 덮어쓸까요?\n" +
+    "아니오를 누르면 기존 재고에 합산/추가합니다."
+  );
+
   importInputRef.current?.click();
 }
+
 
 // 파일 업로드 후 병합
 async function onImportFileChange(ev) {
@@ -371,8 +451,10 @@ async function onImportFileChange(ev) {
     let applied = 0, added = 0, increased = 0, invalid = 0;
     const invalidSamples = [];
 
+    // PATCH: src/App.js (onImportFileChange 내부 setInventory 콜백의 next 생성부만 수정)
     setInventory((prev) => {
-      const next = JSON.parse(JSON.stringify(prev));
+      const next = resetAllRef.current ? createEmptyInventory() : JSON.parse(JSON.stringify(prev));
+      resetAllRef.current = false; // 1회성 사용
       for (const raw of rows) {
         // src/App.js (Home.onImportFileChange - 경로 정규화 적용)
 
@@ -1485,11 +1567,22 @@ export default function AppWrapper() {
   }, []);
 
   // 로컬→클라우드 (inventory set 전체 저장)
-  useEffect(() => {
-    if (applyingCloudRef.current.inv) { applyingCloudRef.current.inv = false; return; }
-    saveLocalInventory(inventory);
-    set(ref("inventory/"), inventory).catch(() => {});
-  }, [inventory]);
+    // PATCH: src/App.js (AppWrapper 내부, inventory 저장 useEffect 교체)
+    useEffect(() => {
+      if (applyingCloudRef.current.inv) { applyingCloudRef.current.inv = false; return; }
+
+      const { inv: safeInv, bad } = sanitizeInventoryKeys(inventory);
+      if (bad.length) {
+        console.warn("[Inventory sanitize] removed invalid keys:", bad.slice(0, 20), bad.length > 20 ? `…(+${bad.length-20})` : "");
+      }
+
+      saveLocalInventory(safeInv);
+      set(ref("inventory/"), safeInv).catch((err) => {
+        console.error("Firebase set failed:", err);
+        toast.error("클라우드 저장 실패: 잘못된 키가 포함되어 있습니다.");
+      });
+    }, [inventory]);
+
 
   // 10분 무활동 자동 로그아웃(선택적)
   useEffect(() => {
