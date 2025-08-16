@@ -44,7 +44,7 @@ git push origin HEAD:main
 
 # build
 say "빌드 시작…"
-if ! npm run build; then
+if npm run build; then
   echo "(오류가 있습니다.)"
   exit 1
 fi
