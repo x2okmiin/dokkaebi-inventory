@@ -438,6 +438,34 @@ details[open] > .sub-summary::after{
 }
 
 
+/* 모바일 장소 카드 스크롤 강제 + 툴바 버튼 수축 방지 */
+
+/* 카드는 세로 플렉스, 바디가 남는 높이 전부를 차지 */
+.summary-grid .card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0 !important; /* 내부 스크롤 동작 핵심 */
+}
+.summary-grid .card-body {
+  flex: 1 1 auto;
+  min-height: 0 !important; /* 자식 스크롤 허용 */
+  overflow: auto !important; /* 스크롤은 바디에만 */
+  overscroll-behavior: contain;
+}
+
+/* 좁은 화면에서 카드 바디 최대 높이 제한 */
+@media (max-width: 600px) {
+  .summary-grid .card-body {
+    max-height: 60vh; /* 헤더/툴바 공간 확보 */
+  }
+}
+
+/* 툴바 줄바꿈 시 버튼이 폭 0으로 수축되는 것 방지 */
+.toolbar .btn {
+  flex: 0 0 auto;
+}
+
+
 /* 장소+전체 카드 그리드만 별도 레이아웃 강제 */
 .summary-grid {
   align-items: start;

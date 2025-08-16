@@ -23,7 +23,7 @@ if [[ ! "$VER" =~ ^[0-9]+(\.[0-9]+){1,2}(-[0-9A-Za-z.-]+)?$ ]]; then
 fi
 
 TAG="v$VER"
-MSG="${2:-"(release): $TAG"}"   # 인자 2 = 커밋 메시지(옵션)
+MSG="${2:-"(pre_release): $TAG"}"   # 인자 2 = 커밋 메시지(옵션)
 
 # 3) 기존 태그 중복 체크(로컬/원격)
 git fetch --tags --quiet || true

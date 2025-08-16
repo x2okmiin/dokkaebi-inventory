@@ -194,6 +194,7 @@ function Home({
   userId,
   userName,
 }) {
+  
   const navigate = useNavigate();
   const categoryRefs = useRef({});
   const cardRefs = useRef({});
@@ -836,7 +837,7 @@ useEffect(() => {
             📘 기록
           </button>
 
-          {isAdmin && (
+          {(isAdmin || (userId && userName)) && (
             <button
               className="btn btn-ghost"
               onClick={() => {
