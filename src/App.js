@@ -1570,18 +1570,27 @@ const fireReadyOnce = () => {
   try { window.dispatchEvent(new Event("dokkebi-ready")); } catch (e) {}
 };
 
-useEffect(() => {
-  try {
-    const envV = process.env.REACT_APP_VERSION || 'dev';
-    const cur = localStorage.getItem('do-kkae-bi-app-version');
-    // 값이 없거나 dev면 초기화 (관리자 더블클릭으로 바꾼 라벨은 덮어쓰지 않음)
-    if (!cur || cur === 'dev') {
-      localStorage.setItem('do-kkae-bi-app-version', envV);
-    }
-  } catch {}
-  // 앱 준비 완료 → 스플래시 닫기
-  window.dispatchEvent(new Event('dokkaebi-ready'));
-}, []);
+    // 앱 부팅 시 스플래시에 버전 송출 + 로컬스토리지 갱신(낡은 값만 덮어씀)
+  useEffect(() => {
+    try {
+      const envV = process.env.REACT_APP_VERSION || 'dev';
+      const cur  = localStorage.getItem('do-kkae-bi-app-version') || '';
+      const parse = (v) => String(v).split('.').map(n => parseInt(n,10) || 0);
+      const older = (() => {
+        if (!cur) return true;
+        const [a1,a2,a3] = parse(cur);
+        const [b1,b2,b3] = parse(envV);
+        if (a1!==b1) return a1<b1;
+        if (a2!==b2) return a2<b2;
+        return a3<b3;
+      })();
+      if (older) localStorage.setItem('do-kkae-bi-app-version', envV);
+      // 스플래시에 현재 버전 전달 → 라벨 즉시 갱신
+      window.dispatchEvent(new CustomEvent('dokkaebi-version', { detail: envV }));
+    } catch {}
+    // 앱 준비 완료 → 스플래시 닫기
+    window.dispatchEvent(new Event('dokkaebi-ready'));
+  }, []);
 
 // (있다면) ⛔️ 제거: 마운트 직후 #app-splash를 즉시 hide/remove 하던 useEffect
 // useEffect(() => { const el = document.getElementById("app-splash"); ... }, []);
