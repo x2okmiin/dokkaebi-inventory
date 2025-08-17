@@ -972,9 +972,9 @@ useEffect(() => {
 
           <div className="item-edit">
             <div className="edit-toolbar" onClick={stop}>
-              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleUpdateItemCount(loc, cat, sub, idx, +1, sub2); }}>＋ 입고</button>
-              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleUpdateItemCount(loc, cat, sub, idx, -1, sub2); }}>－ 출고</button>
-              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleEditItemName(loc, cat, sub, idx, sub2); }}>✎ 이름</button>
+              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleUpdateItemCount(loc, cat, sub, idx, +1, sub2); }}>➕ 입고</button>
+              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleUpdateItemCount(loc, cat, sub, idx, -1, sub2); }}>➖ 출고</button>
+              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleEditItemName(loc, cat, sub, idx, sub2); }}>✏️ 이름</button>
               <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleEditItemNote(loc, cat, sub, idx, sub2); }}>📝 메모</button>
             </div>
           </div>
