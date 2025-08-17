@@ -63,6 +63,7 @@ const catIcons = {
 };
 const catIcon = (cat) => catIcons[cat] || "📦";
 
+// PATCH: src/App.js  (2) LocalStorage helpers 전체 교체
 /* =========================
    2) LocalStorage helpers
    ========================= */
@@ -114,6 +115,29 @@ function getLocalUserId() {
 function getLocalUserName() {
   return localStorage.getItem("do-kkae-bi-user-name") || "";
 }
+
+/** 세션(관리자/UID/이름) 완전 초기화 — 전역 유틸 */
+function clearLocalSession() {
+  try {
+    localStorage.removeItem("do-kkae-bi-user-id");
+    localStorage.removeItem("do-kkae-bi-user-name");
+  } catch (e) {
+    console.warn("clearLocalSession warning:", e);
+  }
+  try {
+    localStorage.setItem("do-kkae-bi-admin", "false");
+  } catch (e) {
+    console.warn("saveLocalAdmin(false) fallback:", e);
+  }
+}
+
+/** 강제 로그아웃 — 전역 유틸(HashRouter 기준) */
+function hardLogout() {
+  clearLocalSession();
+  window.location.hash = "#/login";
+  window.location.reload();
+}
+
 
 /* =========================
    3) 고정 배경 / 네온
@@ -1189,9 +1213,7 @@ useEffect(() => {
             <button
               className="btn btn-ghost"
               onClick={() => {
-                saveLocalAdmin(false);
-                window.location.hash = "#/login";
-                window.location.reload();
+                hardLogout();   
               }}
             >
               🚪 로그아웃
@@ -1532,6 +1554,7 @@ export default function AppWrapper() {
   const isAdmin = getLocalAdmin();
   const userId = getLocalUserId();
   const userName = getLocalUserName();
+
   // ⬇️ 추가: 로그인/세션 존재 여부
   const isLoggedIn = isAdmin || (userId && userName);
 
@@ -1594,9 +1617,7 @@ export default function AppWrapper() {
     const reset = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        saveLocalAdmin(false);
-        window.location.hash = "#/login";
-        window.location.reload();
+      hardLogout();   
       }, LOGOUT_AFTER);
     };
     const events = ["mousemove", "keydown", "click", "touchstart", "scroll", "visibilitychange"];
