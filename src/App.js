@@ -20,7 +20,7 @@ import { Toaster, toast } from "react-hot-toast";
 /* Firebase 래퍼 */
 import { ref, set, onValue, push, update, remove } from "./firebase";
 
-// PATCH: src/App.js (imports 아래, 파일 최상단 근처에 추가)
+// src/App.js (imports 아래, 파일 최상단 근처에 추가)
 const APP_VERSION =
   process.env.REACT_APP_VERSION ||
   localStorage.getItem("do-kkae-bi-app-version") ||
@@ -63,7 +63,7 @@ const catIcons = {
 };
 const catIcon = (cat) => catIcons[cat] || "📦";
 
-// PATCH: src/App.js  (2) LocalStorage helpers 전체 교체
+// src/App.js  (2) LocalStorage helpers 전체 교체
 /* =========================
    2) LocalStorage helpers
    ========================= */
@@ -211,7 +211,7 @@ function ensureItems(inv, loc, cat, sub, sub2) {
 }
 const subPath = (sub, sub2) => (sub2 ? `${sub}/${sub2}` : sub);
 
-// PATCH: src/App.js (공용 유틸 근처에 추가)
+// src/App.js (공용 유틸 근처에 추가)
 function createEmptyInventory() {
   const base = {};
   locations.forEach((loc) => {
@@ -295,7 +295,7 @@ function Home({
   userName,
 }) {
   
-    // PATCH: src/App.js (Home 컴포넌트 상단 지역 상태/refs 근처)
+    // src/App.js (Home 컴포넌트 상단 지역 상태/refs 근처)
   const resetAllRef = useRef(false);
   const navigate = useNavigate();
   const categoryRefs = useRef({});
@@ -307,7 +307,7 @@ function Home({
   const [openPanel, setOpenPanel] = useState(null);
   const [editKey, setEditKey] = useState(null);
 
-  // PATCH: src/App.js  (Home 컴포넌트 내부 normalizeRow 교체)
+  //  src/App.js  (Home 컴포넌트 내부 normalizeRow 교체)
 
 // 시트 → JSON 로우 파싱(헤더 유연 + 'nan' 등 빈값 처리)
 function normalizeRow(r) {
@@ -347,7 +347,7 @@ function normalizeRow(r) {
 
   return { loc, cat, sub, sub2, name, note, qty };
 }
-// PATCH: src/App.js (Home 컴포넌트 내 - 일괄 추가 베타 핵심 로직)
+// src/App.js (Home 컴포넌트 내 - 일괄 추가 베타 핵심 로직)
 
 // 업로드용 파일 입력 ref
 const importInputRef = useRef(null);
@@ -377,7 +377,7 @@ function isValidPath(cat, sub, sub2) {
   return false;
 }
 
-// PATCH: src/App.js (Home 컴포넌트 - 경로 정규화 유틸 추가)
+// src/App.js (Home 컴포넌트 - 경로 정규화 유틸 추가)
 
 // 키 비교용: 소문자 + 공백 제거 + 특수문자(&,/ 제거)
 function stripKey(s) {
@@ -432,7 +432,7 @@ function canonSub2Name(cat, sub, sub2) {
 
 
 // 업로드 버튼 클릭
-// PATCH: src/App.js (handleImportClick 교체)
+// src/App.js (handleImportClick 교체)
 function handleImportClick(e) {
   e.preventDefault(); e.stopPropagation();
   const ok = window.confirm(
@@ -475,7 +475,7 @@ async function onImportFileChange(ev) {
     let applied = 0, added = 0, increased = 0, invalid = 0;
     const invalidSamples = [];
 
-    // PATCH: src/App.js (onImportFileChange 내부 setInventory 콜백의 next 생성부만 수정)
+    // src/App.js (onImportFileChange 내부 setInventory 콜백의 next 생성부만 수정)
     setInventory((prev) => {
       const next = resetAllRef.current ? createEmptyInventory() : JSON.parse(JSON.stringify(prev));
       resetAllRef.current = false; // 1회성 사용
@@ -1129,7 +1129,7 @@ useEffect(() => {
       <FixedBg src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`} overlay="rgba(0,0,0,.18)" />
       <NeonBackdrop />
       <header className="topbar glass">
-      {/* PATCH: src/App.js (Home 헤더 타이틀 교체)*/}
+      {/* src/App.js (Home 헤더 타이틀 교체)*/}
       <h1 className="logo">
         <span className="glow-dot" /> DOKKEBI<span className="thin">/</span>INVENTORY
         <button
@@ -1169,7 +1169,7 @@ useEffect(() => {
             >
               📦 데이터
             </button>
-          {/*PATCH: src/App.js (데이터 메뉴 JSX 교체: 삼항/중괄호 정정 + 숨김 input 위치 고정)*/}
+          {/*src/App.js (데이터 메뉴 JSX 교체: 삼항/중괄호 정정 + 숨김 input 위치 고정)*/}
           {dataMenuOpen && (
             <div className="menu" role="menu" onClick={(e) => e.stopPropagation()}>
               <button
@@ -1561,7 +1561,73 @@ export default function AppWrapper() {
   const applyingCloudRef = useRef({ inv: false, logs: false });
   const invStateRef = useRef(inventory);
   const logsStateRef = useRef(logs);
-  // PATCH: src/App.js (AppWrapper 내부, 상태 선언들 다음에 추가)
+
+// AppWrapper 최상단 상태 선언들 아래에 추가
+const bootRef = useRef({ inv:false, logs:false, fired:false });
+const fireReadyOnce = () => {
+  if (bootRef.current.fired) return;
+  bootRef.current.fired = true;
+  try { window.dispatchEvent(new Event("dokkebi-ready")); } catch (e) {}
+};
+
+useEffect(() => {
+  try {
+    const envV = process.env.REACT_APP_VERSION || 'dev';
+    const cur = localStorage.getItem('do-kkae-bi-app-version');
+    // 값이 없거나 dev면 초기화 (관리자 더블클릭으로 바꾼 라벨은 덮어쓰지 않음)
+    if (!cur || cur === 'dev') {
+      localStorage.setItem('do-kkae-bi-app-version', envV);
+    }
+  } catch {}
+  // 앱 준비 완료 → 스플래시 닫기
+  window.dispatchEvent(new Event('dokkaebi-ready'));
+}, []);
+
+// (있다면) ⛔️ 제거: 마운트 직후 #app-splash를 즉시 hide/remove 하던 useEffect
+// useEffect(() => { const el = document.getElementById("app-splash"); ... }, []);
+
+// 클라우드→로컬 동기화 useEffect 안의 onValue 핸들러를 살짝 보강
+useEffect(() => {
+  const invRefFB = ref("inventory/");
+  const logRefFB = ref("logs/");
+
+  const unsubInv = onValue(invRefFB, (snap) => {
+    if (!snap.exists()) return;
+    const cloud = snap.val();
+    if (JSON.stringify(cloud) !== JSON.stringify(invStateRef.current)) {
+      applyingCloudRef.current.inv = true;
+      setInventory(cloud);
+    }
+    if (!bootRef.current.inv) {
+      bootRef.current.inv = true;
+      if (bootRef.current.logs) fireReadyOnce();
+    }
+  });
+
+  const unsubLogs = onValue(logRefFB, (snap) => {
+    if (!snap.exists()) return;
+    const normalized = normalizeLogsVal(snap.val()).sort((a, b) => new Date(b.ts) - new Date(a.ts));
+    if (JSON.stringify(normalized) !== JSON.stringify(logsStateRef.current)) {
+      applyingCloudRef.current.logs = true;
+      setLogs(normalized);
+    }
+    if (!bootRef.current.logs) {
+      bootRef.current.logs = true;
+      if (bootRef.current.inv) fireReadyOnce();
+    }
+  });
+
+  return () => { unsubInv(); unsubLogs(); };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
+// 폴백 — 혹시 RTDB가 느릴 때도 사용자 묶이지 않도록 8초 후 강제 해제
+useEffect(() => {
+  const t = setTimeout(() => fireReadyOnce(), 8000);
+  return () => clearTimeout(t);
+}, []);
+
+
 useEffect(() => {
   const el = document.getElementById("app-splash");
   if (el) {
@@ -1601,7 +1667,7 @@ useEffect(() => {
   }, []);
 
   // 로컬→클라우드 (inventory set 전체 저장)
-    // PATCH: src/App.js (AppWrapper 내부, inventory 저장 useEffect 교체)
+    //src/App.js (AppWrapper 내부, inventory 저장 useEffect 교체)
     useEffect(() => {
       if (applyingCloudRef.current.inv) { applyingCloudRef.current.inv = false; return; }
 
