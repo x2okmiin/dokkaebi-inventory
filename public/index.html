@@ -40,6 +40,25 @@
       @keyframes pulse { 0%,80%,100%{ transform:scale(0.8); opacity:.6 } 40%{ transform:scale(1); opacity:1 } }
     </style>
   </head>
+<!-- public/index.html -->
+<script>
+  (function () {
+    var removed = false;
+    function kill() {
+      if (removed) return;
+      removed = true;
+      var el = document.getElementById('app-splash');
+      if (el) {
+        el.classList.add('hide');
+        setTimeout(function () {
+          try { el.parentNode && el.parentNode.removeChild(el); } catch (e) {}
+        }, 450);
+      }
+    }
+    window.addEventListener('load', kill);
+    setTimeout(kill, 5000); // JS 지연/오류 대비 폴백
+  })();
+</script>
 
   <body>
     <!-- HTML 스플래시: React(AppWrapper의 useEffect)에서 hide → remove -->

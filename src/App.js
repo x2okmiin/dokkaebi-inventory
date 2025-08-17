@@ -1561,6 +1561,15 @@ export default function AppWrapper() {
   const applyingCloudRef = useRef({ inv: false, logs: false });
   const invStateRef = useRef(inventory);
   const logsStateRef = useRef(logs);
+  // PATCH: src/App.js (AppWrapper 내부, 상태 선언들 다음에 추가)
+useEffect(() => {
+  const el = document.getElementById("app-splash");
+  if (el) {
+    el.classList.add("hide");
+    setTimeout(() => el.remove(), 400);
+  }
+}, []);
+
   useEffect(() => { invStateRef.current = inventory; }, [inventory]);
   useEffect(() => { logsStateRef.current = logs; }, [logs]);
 
