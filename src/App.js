@@ -1532,6 +1532,8 @@ export default function AppWrapper() {
   const isAdmin = getLocalAdmin();
   const userId = getLocalUserId();
   const userName = getLocalUserName();
+  // ⬇️ 추가: 로그인/세션 존재 여부
+  const isLoggedIn = isAdmin || (userId && userName);
 
   const applyingCloudRef = useRef({ inv: false, logs: false });
   const invStateRef = useRef(inventory);
@@ -1618,42 +1620,66 @@ export default function AppWrapper() {
       />
       <Router>
         <Routes>
+          {/* ⬇️ 로그인 안돼 있으면 무조건 /login 으로 보냄 */}
           <Route
             path="/"
             element={
-              <Home
-                inventory={inventory}
-                setInventory={setInventory}
-                searchTerm={searchTerm}
-                setSearchTerm={setSearchTerm}
-                logs={logs}
-                setLogs={setLogs}
-                isAdmin={isAdmin}
-                userId={userId}
-                userName={userName}
-              />
+              isLoggedIn ? (
+                <Home
+                  inventory={inventory}
+                  setInventory={setInventory}
+                  searchTerm={searchTerm}
+                  setSearchTerm={setSearchTerm}
+                  logs={logs}
+                  setLogs={setLogs}
+                  isAdmin={isAdmin}
+                  userId={userId}
+                  userName={userName}
+                />
+              ) : (
+                <Navigate to="/login" replace />
+              )
             }
           />
-          <Route path="/logs" element={<LogsPage logs={logs} setLogs={setLogs} />} />
+
+          <Route
+            path="/logs"
+            element={
+              isLoggedIn ? (
+                <LogsPage logs={logs} setLogs={setLogs} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+
+          {/* ⬇️ 이미 로그인돼 있으면 / 로 되돌림 */}
           <Route
             path="/login"
             element={
-              <LoginPage
-                onLogin={({ pw, uid, name }) => {
-                  if (pw === "2500" && uid && name) {
-                    saveLocalAdmin(true);
-                    localStorage.setItem("do-kkae-bi-user-id", uid);
-                    localStorage.setItem("do-kkae-bi-user-name", name);
-                    window.location.hash = "#/";
-                    window.location.reload();
-                  } else {
-                    toast.error("입력 정보를 확인해 주세요.");
-                  }
-                }}
-              />
+              isLoggedIn ? (
+                <Navigate to="/" replace />
+              ) : (
+                <LoginPage
+                  onLogin={({ pw, uid, name }) => {
+                    if (pw === "2500" && uid && name) {
+                      saveLocalAdmin(true);
+                      localStorage.setItem("do-kkae-bi-user-id", uid);
+                      localStorage.setItem("do-kkae-bi-user-name", name);
+                      window.location.hash = "#/";
+                      window.location.reload();
+                    } else {
+                      toast.error("입력 정보를 확인해 주세요.");
+                    }
+                  }}
+                />
+              )
             }
           />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route
+            path="*"
+            element={<Navigate to={isLoggedIn ? "/" : "/login"} replace />}
+          />
         </Routes>
       </Router>
     </>
