@@ -1,6 +1,6 @@
 {
     "name": "dokkaebi-inventory",
-    "version": "1.5.3",
+    "version": "1.5.4",
     "private": true,
     "homepage": "https://x2okmiin.github.io/dokkaebi-inventory",
     "dependencies": {
