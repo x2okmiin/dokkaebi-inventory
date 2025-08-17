@@ -1,13 +1,16 @@
 {
-  "name": "DOKKAEBI / INVENTORY",
-  "short_name": "DOKKAEBI",
+  "short_name": "도깨비 inv",
+  "name": "도깨비 인벤토리",
   "start_url": "./#/login",
-  "scope": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#0b1020",
   "theme_color": "#0b1020",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }
