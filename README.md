@@ -3,7 +3,6 @@ README.md 전체를 완전판으로 덮어쓰는 패치를 준비했어. VS Code
 
 ---
 
-````markdown
 # DOKKAEBI / INVENTORY  
 React 기반 드론 재고·입출고 관리 콘솔
 
@@ -102,7 +101,6 @@ printf "REACT_APP_VERSION=0.0.0-dev\n" > .env.local
 
 # 개발 서버
 npm start
-````
 
 접속: `http://localhost:3000`
 로그인: 학번 + 이름 + 비밀번호 `2500` (관리자 모드 전환)
