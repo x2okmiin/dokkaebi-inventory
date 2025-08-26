@@ -1,5 +1,3 @@
-알겠어 👍
-README.md 전체를 완전판으로 덮어쓰는 패치를 준비했어. VS Code에서 `README.md` 열고 아래 내용 전체를 복붙 → 저장하면 돼.
 
 ---
 
@@ -195,7 +193,3 @@ npm run ud -- 1.5.8 "(release): v1.5.8"
 ```
 
 ---
-
-✅ 이걸 그대로 `README.md`에 붙여넣으면 최신 코드랑 완전히 싱크된 완전판이 돼.  
-바로 적용할래? 아니면 내가 `git add README.md && git commit -m "docs: update README to v1.5.8"` 커맨드도 같이 알려줄까?
-```
