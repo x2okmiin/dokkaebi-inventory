@@ -1,4 +1,4 @@
-// src/App.js
+// PATCH: src/App.js
 
 /* ==========================================================================
    App.css 연동 및 파일 구성 안내
@@ -9,7 +9,7 @@
    - 섹션별 주석을 유지해 가독성과 회귀 테스트를 용이하게 합니다.
    ========================================================================== */
 
-// src/App.js — 통합본 (수정/프롬프트 정상, 2×2 유지, ≥1100px에서 "전체" 중앙)
+// src/App.js  — 통합/정리본 (자동 새로고침 제거, 구문 오류 정리, 2×2 그리드 유지)
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { HashRouter as Router, Routes, Route, useNavigate, Navigate } from "react-router-dom";
 import * as XLSX from "xlsx";
@@ -20,12 +20,11 @@ import { Toaster, toast } from "react-hot-toast";
 /* Firebase 래퍼 */
 import { ref, set, onValue, push, update, remove } from "./firebase";
 
-// src/App.js (imports 아래, 파일 최상단 근처에 추가)
+/* 버전 라벨 */
 const APP_VERSION =
   process.env.REACT_APP_VERSION ||
   localStorage.getItem("do-kkae-bi-app-version") ||
   "dev";
-
 
 /* =========================
    1) 카테고리/스키마 정의
@@ -63,7 +62,6 @@ const catIcons = {
 };
 const catIcon = (cat) => catIcons[cat] || "📦";
 
-// src/App.js  (2) LocalStorage helpers 전체 교체
 /* =========================
    2) LocalStorage helpers
    ========================= */
@@ -104,7 +102,10 @@ function saveLocalLogs(data) {
   localStorage.setItem("do-kkae-bi-logs", JSON.stringify(data));
 }
 function getLocalAdmin() {
-  return localStorage.getItem("do-kkae-bi-admin") === "true";
+  return (
+    sessionStorage.getItem("do-kkae-bi-admin") === "true" ||
+    localStorage.getItem("do-kkae-bi-admin") === "true"
+  );
 }
 function saveLocalAdmin(val) {
   localStorage.setItem("do-kkae-bi-admin", val ? "true" : "false");
@@ -116,28 +117,29 @@ function getLocalUserName() {
   return localStorage.getItem("do-kkae-bi-user-name") || "";
 }
 
-/** 세션(관리자/UID/이름) 완전 초기화 — 전역 유틸 */
-function clearLocalSession() {
-  try {
-    localStorage.removeItem("do-kkae-bi-user-id");
-    localStorage.removeItem("do-kkae-bi-user-name");
-  } catch (e) {
-    console.warn("clearLocalSession warning:", e);
-  }
-  try {
-    localStorage.setItem("do-kkae-bi-admin", "false");
-  } catch (e) {
-    console.warn("saveLocalAdmin(false) fallback:", e);
+/** 강제 로그아웃 — 전역 유틸(HashRouter 기준, 자동 새로고침 제거) */
+ function hardLogout() {
+   clearLocalSession();
+   try { localStorage.removeItem("do-kkae-bi-login-ts"); } catch {}
+   // 라우팅 이동 + 렌더 트리거
+   window.location.hash = "#/login";
+   try { window.dispatchEvent(new Event("dokkebi-auth-changed")); } catch {}
+   /** 세션(관리자/UID/이름) 완전 초기화 — 전역 유틸 */
+   function clearLocalSession() {
+    try {
+      localStorage.removeItem("do-kkae-bi-user-id");
+      localStorage.removeItem("do-kkae-bi-user-name");
+      sessionStorage.removeItem("do-kkae-bi-admin");
+    } catch (e) {
+      console.warn("clearLocalSession warning:", e);
+    }
+    try {
+      localStorage.setItem("do-kkae-bi-admin", "false");
+    } catch (e) {
+      console.warn("saveLocalAdmin(false) fallback:", e);
+    }
   }
 }
-
-/** 강제 로그아웃 — 전역 유틸(HashRouter 기준) */
-function hardLogout() {
-  clearLocalSession();
-  window.location.hash = "#/login";
-  window.location.reload();
-}
-
 
 /* =========================
    3) 고정 배경 / 네온
@@ -211,7 +213,6 @@ function ensureItems(inv, loc, cat, sub, sub2) {
 }
 const subPath = (sub, sub2) => (sub2 ? `${sub}/${sub2}` : sub);
 
-// src/App.js (공용 유틸 근처에 추가)
 function createEmptyInventory() {
   const base = {};
   locations.forEach((loc) => {
@@ -237,11 +238,9 @@ function createEmptyInventory() {
 
 /** Firebase 금지 문자를 포함하거나 빈 문자열인 키 제거 */
 const FORBIDDEN_KEY_RE = /[.#$/[\]]/;
-
 function sanitizeInventoryKeys(src) {
   const inv = JSON.parse(JSON.stringify(src));
   const bad = [];
-
   const delIfBad = (obj, key, path) => {
     if (!key || FORBIDDEN_KEY_RE.test(key)) {
       delete obj[key];
@@ -250,7 +249,6 @@ function sanitizeInventoryKeys(src) {
     }
     return false;
   };
-
   Object.keys(inv || {}).forEach((loc) => {
     if (delIfBad(inv, loc, "inventory/")) return;
     const cats = inv[loc] || {};
@@ -264,21 +262,16 @@ function sanitizeInventoryKeys(src) {
         if (node && typeof node === "object") {
           Object.keys(node).forEach((sub2) => {
             if (delIfBad(node, sub2, `inventory/${loc}/${cat}/${sub}/`)) return;
-            // 리프는 반드시 배열 보장
             if (!Array.isArray(node[sub2])) node[sub2] = [];
           });
         } else {
-          // 구조가 망가졌으면 배열로 복구
           subs[sub] = [];
         }
       });
     });
   });
-
   return { inv, bad };
 }
-
-
 
 /* =========================
    5) 홈(재고) 화면
@@ -294,8 +287,8 @@ function Home({
   userId,
   userName,
 }) {
-  
-    // src/App.js (Home 컴포넌트 상단 지역 상태/refs 근처)
+  // ※ 스플래시 관련 ref는 AppWrapper에서만 관리 (여기서 제거)
+
   const resetAllRef = useRef(false);
   const navigate = useNavigate();
   const categoryRefs = useRef({});
@@ -307,235 +300,214 @@ function Home({
   const [openPanel, setOpenPanel] = useState(null);
   const [editKey, setEditKey] = useState(null);
 
-  //  src/App.js  (Home 컴포넌트 내부 normalizeRow 교체)
-
-// 시트 → JSON 로우 파싱(헤더 유연 + 'nan' 등 빈값 처리)
-function normalizeRow(r) {
-  const get = (...keys) => {
-    for (const k of keys) {
-      if (r[k] !== undefined) return r[k];
-      // 공백/대소문자 무시한 키 매칭
-      const rk = Object.keys(r).find(
-        (x) => String(x).trim().toLowerCase() === String(k).trim().toLowerCase()
-      );
-      if (rk && r[rk] !== undefined) return r[rk];
-    }
-    return "";
-  };
-
-  // 빈값/NaN 토큰 정리
-  const clean = (v) => {
-    if (v === null || v === undefined) return "";
-    let s = String(v).trim();
-    if (!s) return "";
-    const L = s.toLowerCase();
-    // 엑셀/판다스에서 생기는 토큰들을 빈값으로 간주
-    if (L === "nan" || L === "na" || L === "n/a" || L === "-") return "";
-    return s;
-  };
-
-  const loc  = clean(get("장소","위치","place","Place","LOCATION","location"));
-  const cat  = clean(get("상위카테고리","대분류","카테고리","Category","category"));
-  const sub  = clean(get("하위카테고리","중분류","Subcategory","subcategory"));
-  const sub2 = clean(get("최하위카테고리","소분류","SubSubcategory","subsubcategory","Sub2","소분류(필요시)"));
-  const name = clean(get("품목명","품명","항목","아이템","item","Item","품목"));
-  const note = clean(get("메모","비고","설명","Note","note","비고(선택)"));
-
-  let qtyRaw = get("수량","개수","수량(개)","수 량","수량합계","Qty","qty","Quantity","quantity");
-  let qty = Number(qtyRaw ?? 0);
-  if (!Number.isFinite(qty)) qty = 0;
-
-  return { loc, cat, sub, sub2, name, note, qty };
-}
-// src/App.js (Home 컴포넌트 내 - 일괄 추가 베타 핵심 로직)
-
-// 업로드용 파일 입력 ref
-const importInputRef = useRef(null);
-
-// 카테고리 경로 유효성 검사
-function isValidPath(cat, sub, sub2) {
-  const def = subcategories[cat];
-  if (!def) return false;
-
-  if (Array.isArray(def)) {
-    // 2단 (상위-하위)
-    return !!sub && def.includes(sub) && (!sub2 || sub2 === "");
-  }
-
-  if (def && typeof def === "object") {
-    if (!sub || !Object.prototype.hasOwnProperty.call(def, sub)) return false;
-    const leaf = def[sub];
-    if (Array.isArray(leaf)) {
-      // 2단(객체의 값이 배열이면 최하위 없음)
-      return !sub2 || sub2 === "";
-    }
-    if (leaf && typeof leaf === "object") {
-      // 3단
-      return !!sub2 && Object.prototype.hasOwnProperty.call(leaf, sub2);
-    }
-  }
-  return false;
-}
-
-// src/App.js (Home 컴포넌트 - 경로 정규화 유틸 추가)
-
-// 키 비교용: 소문자 + 공백 제거 + 특수문자(&,/ 제거)
-function stripKey(s) {
-  return String(s || "")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[&/]/g, "");
-}
-
-// 장소/카테고리/하위/최하위 값을 스키마 키로 정규화
-function canonLocName(loc) {
-  const found = locations.find((L) => stripKey(L) === stripKey(loc));
-  return found || loc;
-}
-function canonCatName(cat) {
-  const keys = Object.keys(subcategories);
-  const found = keys.find((k) => stripKey(k) === stripKey(cat));
-  // 흔한 표기 차이 몇 개 보정 (선택)
-  if (!found) {
-    const alt = {
-      "드론제어부": "드론 제어부",
-      "조종기개수": "조종기 개수",
-      "기체개수": "기체 개수",
-    }[stripKey(cat)];
-    if (alt) return alt;
-  }
-  return found || cat;
-}
-function canonSubName(cat, sub) {
-  const def = subcategories[cat];
-  if (!def) return sub;
-  const keys = Array.isArray(def) ? def : Object.keys(def);
-  // stripKey 기반 일치
-  const found = keys.find((k) => stripKey(k) === stripKey(sub));
-  // '프로펠라' → '프로펠러' 같은 철자 차이 보정 (선택)
-  if (!found && stripKey(sub) === "프로펠라") {
-    const alt = keys.find((k) => stripKey(k) === "프로펠러");
-    if (alt) return alt;
-  }
-  return found || sub;
-}
-function canonSub2Name(cat, sub, sub2) {
-  const def = subcategories[cat];
-  if (!def || Array.isArray(def)) return "";
-  const leaf = def[sub];
-  if (!leaf || Array.isArray(leaf)) return "";
-  const keys = Object.keys(leaf);
-  const found = keys.find((k) => stripKey(k) === stripKey(sub2));
-  // 예: '종이마스킹' ↔ '종이&마스킹'
-  return found || sub2;
-}
-
-
-// 업로드 버튼 클릭
-// src/App.js (handleImportClick 교체)
-function handleImportClick(e) {
-  e.preventDefault(); e.stopPropagation();
-  const ok = window.confirm(
-    "⚠️ 일괄 추가(베타)\n\n" +
-    "- 로그를 남기지 않고 재고만 변경합니다.\n" +
-    "- 실행 전 '재고 Excel 내보내기'로 백업을 권장합니다.\n\n" +
-    "계속할까요?"
-  );
-  if (!ok) return;
-
-  // ⬇ 선택: 초기화 후 적용 모드
-  resetAllRef.current = window.confirm(
-    "전체 재고를 초기화(0)한 뒤 업로드 파일로 덮어쓸까요?\n" +
-    "아니오를 누르면 기존 재고에 합산/추가합니다."
-  );
-
-  importInputRef.current?.click();
-}
-
-
-// 파일 업로드 후 병합
-async function onImportFileChange(ev) {
-  ev.preventDefault(); ev.stopPropagation();
-  const file = ev.target.files?.[0];
-  ev.target.value = ""; // 같은 파일 반복 업로드 허용
-  setDataMenuOpen(false);
-  if (!file) return;
-
-  try {
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: "array" });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
-
-    if (!rows.length) {
-      toast.error("업로드 시트가 비어있습니다.");
-      return;
-    }
-
-    let applied = 0, added = 0, increased = 0, invalid = 0;
-    const invalidSamples = [];
-
-    // src/App.js (onImportFileChange 내부 setInventory 콜백의 next 생성부만 수정)
-    setInventory((prev) => {
-      const next = resetAllRef.current ? createEmptyInventory() : JSON.parse(JSON.stringify(prev));
-      resetAllRef.current = false; // 1회성 사용
-      for (const raw of rows) {
-        // src/App.js (Home.onImportFileChange - 경로 정규화 적용)
-
-        // 기존: const { loc, cat, sub, sub2, name, note, qty } = normalizeRow(raw);
-        // 아래처럼 정규화 값을 준비
-        const { loc, cat, sub, sub2, name, note, qty } = normalizeRow(raw);
-        const cLoc  = canonLocName(loc);
-        const cCat  = canonCatName(cat);
-        const cSub  = canonSubName(cCat, sub);
-        const cSub2 = sub2 ? canonSub2Name(cCat, cSub, sub2) : "";
-
-        // 장소/수량/이름 검증
-        if (!cLoc || !locations.includes(cLoc)) { /* ...그대로... */ }
-        if (!name || !Number.isFinite(qty) || qty <= 0) { /* ...그대로... */ }
-
-        // 경로 검증은 정규화된 값으로!
-        if (!isValidPath(cCat, cSub, cSub2)) {
-          invalid++;
-          if (invalidSamples.length < 5)
-            invalidSamples.push(`${cat || "(빈)"}>${sub || ""}${sub2 ? ">" + sub2 : ""}`);
-          continue;
-        }
-
-        // 병합도 정규화된 값으로!
-        const arr = ensureItems(next, cLoc, cCat, cSub, cSub2 || undefined);
-        const idx = arr.findIndex((it) => String(it.name).trim() === name);
-        if (idx >= 0) {
-          arr[idx].count = Math.max(0, Number(arr[idx].count || 0) + Number(qty));
-          if (note) arr[idx].note = note;
-          increased++; applied++;
-        } else {
-          arr.push({ name, count: Number(qty), ...(note ? { note } : {}) });
-          added++; applied++;
-        }
+  // 시트 → JSON 로우 파싱(헤더 유연 + 'nan' 등 빈값 처리)
+  function normalizeRow(r) {
+    const get = (...keys) => {
+      for (const k of keys) {
+        if (r[k] !== undefined) return r[k];
+        const rk = Object.keys(r).find(
+          (x) => String(x).trim().toLowerCase() === String(k).trim().toLowerCase()
+        );
+        if (rk && r[rk] !== undefined) return r[rk];
       }
-      return next;
-    });
-
-    toast.success(`일괄 추가 완료: 적용 ${applied}건 (신규 ${added}, 증가 ${increased}) / 무시 ${invalid}건`);
-    if (invalid) {
-      console.warn("[Import skipped examples]", invalidSamples);
-      toast((t) => (
-        <div>
-          일부 행이 무시되었습니다. (총 {invalid}건)
-          <div style={{opacity:.8, marginTop:4, fontSize:12}}>
-            예시: {invalidSamples.join(" / ")}
-          </div>
-          <button className="btn btn-ghost" onClick={() => toast.dismiss(t.id)}>닫기</button>
-        </div>
-      ), { duration: 6000 });
-    }
-  } catch (err) {
-    console.error(err);
-    toast.error(`가져오기 실패: ${err?.message || String(err)}`);
+      return "";
+    };
+    const clean = (v) => {
+      if (v === null || v === undefined) return "";
+      let s = String(v).trim();
+      if (!s) return "";
+      const L = s.toLowerCase();
+      if (L === "nan" || L === "na" || L === "n/a" || L === "-") return "";
+      return s;
+    };
+    const loc = clean(get("장소", "위치", "place", "Place", "LOCATION", "location"));
+    const cat = clean(get("상위카테고리", "대분류", "카테고리", "Category", "category"));
+    const sub = clean(get("하위카테고리", "중분류", "Subcategory", "subcategory"));
+    const sub2 = clean(get("최하위카테고리", "소분류", "SubSubcategory", "subsubcategory", "Sub2", "소분류(필요시)"));
+    const name = clean(get("품목명", "품명", "항목", "아이템", "item", "Item", "품목"));
+    const note = clean(get("메모", "비고", "설명", "Note", "note", "비고(선택)"));
+    let qtyRaw = get("수량", "개수", "수량(개)", "수 량", "수량합계", "Qty", "qty", "Quantity", "quantity");
+    let qty = Number(qtyRaw ?? 0);
+    if (!Number.isFinite(qty)) qty = 0;
+    return { loc, cat, sub, sub2, name, note, qty };
   }
-}
 
+  // 업로드용 파일 입력 ref
+  const importInputRef = useRef(null);
+
+  // 카테고리 경로 유효성 검사
+  function isValidPath(cat, sub, sub2) {
+    const def = subcategories[cat];
+    if (!def) return false;
+    if (Array.isArray(def)) {
+      return !!sub && def.includes(sub) && (!sub2 || sub2 === "");
+    }
+    if (def && typeof def === "object") {
+      if (!sub || !Object.prototype.hasOwnProperty.call(def, sub)) return false;
+      const leaf = def[sub];
+      if (Array.isArray(leaf)) {
+        return !sub2 || sub2 === "";
+      }
+      if (leaf && typeof leaf === "object") {
+        return !!sub2 && Object.prototype.hasOwnProperty.call(leaf, sub2);
+      }
+    }
+    return false;
+  }
+
+  // 키 비교용 정규화
+  function stripKey(s) {
+    return String(s || "").toLowerCase().replace(/\s+/g, "").replace(/[&/]/g, "");
+  }
+  function canonLocName(loc) {
+    const found = locations.find((L) => stripKey(L) === stripKey(loc));
+    return found || loc;
+  }
+  function canonCatName(cat) {
+    const keys = Object.keys(subcategories);
+    const found = keys.find((k) => stripKey(k) === stripKey(cat));
+    if (!found) {
+      const alt = {
+        드론제어부: "드론 제어부",
+        조종기개수: "조종기 개수",
+        기체개수: "기체 개수",
+      }[stripKey(cat)];
+      if (alt) return alt;
+    }
+    return found || cat;
+  }
+  function canonSubName(cat, sub) {
+    const def = subcategories[cat];
+    if (!def) return sub;
+    const keys = Array.isArray(def) ? def : Object.keys(def);
+    const found = keys.find((k) => stripKey(k) === stripKey(sub));
+    if (!found && stripKey(sub) === "프로펠라") {
+      const alt = keys.find((k) => stripKey(k) === "프로펠러");
+      if (alt) return alt;
+    }
+    return found || sub;
+  }
+  function canonSub2Name(cat, sub, sub2) {
+    const def = subcategories[cat];
+    if (!def || Array.isArray(def)) return "";
+    const leaf = def[sub];
+    if (!leaf || Array.isArray(leaf)) return "";
+    const keys = Object.keys(leaf);
+    const found = keys.find((k) => stripKey(k) === stripKey(sub2));
+    return found || sub2;
+  }
+
+  // 업로드 버튼
+  function handleImportClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const ok = window.confirm(
+      "⚠️ 일괄 추가(베타)\n\n- 로그를 남기지 않고 재고만 변경합니다.\n- 실행 전 '재고 Excel 내보내기'로 백업을 권장합니다.\n\n계속할까요?"
+    );
+    if (!ok) return;
+
+    // 초기화 후 덮어쓰기 여부
+    resetAllRef.current = window.confirm(
+      "전체 재고를 완전 초기화 한 뒤 업로드 파일로 덮어쓸까요?\n아니오를 누르면 기존 재고에 합산/추가됩니다."
+    );
+
+    if (importInputRef.current) {
+      importInputRef.current.value = null;
+      importInputRef.current.click();
+    }
+  }
+
+  // 파일 업로드 후 병합
+  async function onImportFileChange(ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    setDataMenuOpen(false);
+    if (!file) return;
+
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      if (!rows.length) {
+        toast.error("업로드 시트가 비어있습니다.");
+        return;
+      }
+
+      let applied = 0,
+        added = 0,
+        increased = 0,
+        invalid = 0;
+      const invalidSamples = [];
+
+      setInventory((prev) => {
+        const next = resetAllRef.current ? createEmptyInventory() : JSON.parse(JSON.stringify(prev));
+        resetAllRef.current = false;
+
+        for (const raw of rows) {
+          const { loc, cat, sub, sub2, name, note, qty } = normalizeRow(raw);
+          const cLoc = canonLocName(loc);
+          const cCat = canonCatName(cat);
+          const cSub = canonSubName(cCat, sub);
+          const cSub2 = sub2 ? canonSub2Name(cCat, cSub, sub2) : "";
+
+          if (!cLoc || !locations.includes(cLoc)) continue;
+          if (!name || !Number.isFinite(qty)) continue; 
+
+          if (!isValidPath(cCat, cSub, cSub2)) {
+            invalid++;
+            if (invalidSamples.length < 5)
+              invalidSamples.push(`${cat || "(빈)"}>${sub || ""}${sub2 ? ">" + sub2 : ""}`);
+            continue;
+          }
+
+          const arr = ensureItems(next, cLoc, cCat, cSub, cSub2 || undefined);
+          const idx = arr.findIndex((it) => String(it.name).trim() === name);
+          if (idx >= 0) {
+            arr[idx].count = Math.max(0, Number(arr[idx].count || 0) + Number(qty));
+            if (note) arr[idx].note = note;
+            increased++;
+            applied++;
+          } else {
+              arr.push({
+                name,
+                // DB/상태에는 항상 유효 숫자 보관 (0 또는 양수)
+                count: qty > 0 ? Number(qty) : 0,
+                ...(note ? { note } : {}),
+              });
+            added++;
+            applied++;
+          }
+        }
+        return next;
+      });
+
+      toast.success(`일괄 추가 완료: 적용 ${applied}건 (신규 ${added}, 증가 ${increased}) / 무시 ${invalid}건`);
+      if (invalid) {
+        console.warn("[Import skipped examples]", invalidSamples);
+        toast(
+          (t) => (
+            <div>
+              일부 행이 무시되었습니다. (총 {invalid}건)
+              <div style={{ opacity: 0.8, marginTop: 4, fontSize: 12 }}>
+                예시: {invalidSamples.join(" / ")}
+              </div>
+              <button className="btn btn-ghost" onClick={() => toast.dismiss(t.id)}>
+                닫기
+              </button>
+            </div>
+          ),
+          { duration: 6000 }
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(`가져오기 실패: ${err?.message || String(err)}`);
+    }
+  }
 
   // 동기화 인디케이터
   useEffect(() => {
@@ -567,23 +539,23 @@ async function onImportFileChange(ev) {
     if (el?.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [openPanel]);
 
-  // 수정 패널 바깥 클릭/ESC 닫기 (버튼과 에디트 내부는 예외)
-  
-  // 팝업 열릴 때 모든 details를 강제로 펼치기
-useEffect(() => {
-  if (!openPanel) return;
-  // 다음 프레임에서 실행해야 DOM이 렌더된 뒤에 적용됨
-  requestAnimationFrame(() => {
-    document.querySelectorAll('.popup details').forEach(d => (d.open = true));
-  });
-}, [openPanel]);
+  // 팝업 열릴 때 내부 details 모두 펼치기
+  useEffect(() => {
+    if (!openPanel) return;
+    requestAnimationFrame(() => {
+      document.querySelectorAll(".popup details").forEach((d) => (d.open = true));
+    });
+  }, [openPanel]);
 
+  // 이름/메모 편집 메뉴 닫기
   useEffect(() => {
     const onDocClick = (e) => {
       if (e.target.closest(".item-edit") || e.target.closest(".btn-compact") || e.target.closest(".item-actions")) return;
       setEditKey(null);
     };
-    const onEsc = (e) => { if (e.key === "Escape") setEditKey(null); };
+    const onEsc = (e) => {
+      if (e.key === "Escape") setEditKey(null);
+    };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("touchstart", onDocClick);
     document.addEventListener("keydown", onEsc);
@@ -594,70 +566,140 @@ useEffect(() => {
     };
   }, []);
 
-  /* ===== 내보내기 ===== */
-  function exportInventoryExcel() {
-    const rows = [];
-    const itemTotals = {};
-    locations.forEach((loc) => {
-      Object.entries(subcategories).forEach(([cat, subs]) => {
-        if (Array.isArray(subs)) {
-          subs.forEach((sub) => {
-            (getItems(inventory, loc, cat, sub) || []).forEach((item) => {
-              rows.push({ 장소: loc, 상위카테고리: cat, 하위카테고리: sub, 품목명: item.name, 수량: item.count });
-              if (!itemTotals[item.name]) itemTotals[item.name] = { 합계: 0, 장소별: {} };
-              itemTotals[item.name].합계 += item.count;
-              itemTotals[item.name].장소별[loc] = (itemTotals[item.name].장소별[loc] || 0) + item.count;
+ /* ===== 내보내기 ===== */
+/**
+ * 요구사항
+ * 1) 세 장소(동아리방/비행장/교수님방)에 대해,
+ *    어떤 품목이든 각 장소별로 반드시 1행씩 배출 (모두 0이어도 누락 금지)
+ * 2) 수량이 0(또는 없음)인 경우, 엑셀에는 숫자 0이 아니라 **문자열 'NaN'** 으로 기록
+ *    -> 일괄 추가(베타) 업로더가 무시하도록 하기 위함 (§9 사양)
+ * 3) 기존 두 번째 시트(품목별 합계)는 숫자 합계를 정상 표기 (NaN 문자열과 무관)
+ */
+function exportInventoryExcel() {
+  const HEADER = ["장소", "상위카테고리", "하위카테고리", "최하위카테고리", "품목명", "수량", "메모"];
+
+  const toNaNString = (v) => {
+    // 0(또는 결측)인 경우 업로더 무시를 위해 문자열 'nan'로 내보냄
+    if (v === 0 || v == null || Number.isNaN(v)) return "nan";
+    return v;
+  };
+
+  // 모든 장소에서 등장하는 "경로+품목"의 전체 집합을 만든다.
+  // key: `${cat}|||${sub||''}|||${sub2||''}|||${itemName}`
+  const allItemKeys = new Set();
+
+  // 경로를 훑으며 key 수집
+  for (const loc of locations) {
+    Object.entries(subcategories).forEach(([cat, subs]) => {
+      if (Array.isArray(subs)) {
+        // 2단: cat -> sub -> items[]
+        subs.forEach((sub) => {
+          (getItems(inventory, loc, cat, sub) || []).forEach((it) => {
+            allItemKeys.add(`${cat}|||${sub}|||${""}|||${it.name}`);
+          });
+        });
+      } else {
+        // 3단: cat -> sub -> sub2? -> items[]
+        Object.entries(subs).forEach(([sub, subs2]) => {
+          if (Array.isArray(subs2)) {
+            (getItems(inventory, loc, cat, sub) || []).forEach((it) => {
+              allItemKeys.add(`${cat}|||${sub}|||${""}|||${it.name}`);
             });
-          });
-        } else {
-          Object.entries(subs).forEach(([sub, subs2]) => {
-            if (Array.isArray(subs2)) {
-              (getItems(inventory, loc, cat, sub) || []).forEach((item) => {
-                rows.push({ 장소: loc, 상위카테고리: cat, 하위카테고리: sub, 품목명: item.name, 수량: item.count });
-                if (!itemTotals[item.name]) itemTotals[item.name] = { 합계: 0, 장소별: {} };
-                itemTotals[item.name].합계 += item.count;
-                itemTotals[item.name].장소별[loc] = (itemTotals[item.name].장소별[loc] || 0) + item.count;
+          } else {
+            Object.keys(subs2).forEach((sub2) => {
+              (getItems(inventory, loc, cat, sub, sub2) || []).forEach((it) => {
+                allItemKeys.add(`${cat}|||${sub}|||${sub2}|||${it.name}`);
               });
-            } else {
-              Object.keys(subs2).forEach((sub2) => {
-                (getItems(inventory, loc, cat, sub, sub2) || []).forEach((item) => {
-                  rows.push({
-                    장소: loc, 상위카테고리: cat, 하위카테고리: `${sub}/${sub2}`, 품목명: item.name, 수량: item.count,
-                  });
-                  if (!itemTotals[item.name]) itemTotals[item.name] = { 합계: 0, 장소별: {} };
-                  itemTotals[item.name].합계 += item.count;
-                  itemTotals[item.name].장소별[loc] = (itemTotals[item.name].장소별[loc] || 0) + item.count;
-                });
-              });
-            }
-          });
-        }
-      });
+            });
+          }
+        });
+      }
     });
-
-    rows.sort((a, b) => {
-      if (a.장소 !== b.장소) return a.장소.localeCompare(b.장소);
-      if (a.상위카테고리 !== b.상위카테고리) return a.상위카테고리.localeCompare(b.상위카테고리);
-      if (a.하위카테고리 !== b.하위카테고리) return a.하위카테고리.localeCompare(b.하위카테고리);
-      return a.품목명.localeCompare(b.품목명);
-    });
-
-    rows.push({});
-    rows.push({ 품목명: "=== 품목별 전체 합계 ===" });
-    Object.entries(itemTotals).forEach(([name, info]) => {
-      rows.push({ 품목명: name, 총합계: info.합계, ...info.장소별 });
-    });
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "재고현황");
-    XLSX.writeFile(wb, "재고현황.xlsx");
   }
+
+  // 행 생성: 모든 key * 각 장소 → 반드시 한 줄씩
+  const rows = [];
+  // 품목별 합계 계산용(숫자 합계)
+  const itemTotals = {}; // { [itemName]: { 합계: number, 장소별: { [loc]: number } } }
+
+  const addItemTotal = (name, loc, countNum) => {
+    if (!itemTotals[name]) itemTotals[name] = { 합계: 0, 장소별: {} };
+    itemTotals[name].합계 += countNum || 0;
+    itemTotals[name].장소별[loc] = (itemTotals[name].장소별[loc] || 0) + (countNum || 0);
+  };
+
+  // 아이템 조회 헬퍼 (count + note 동시 조회)
+  const findItem = (loc, cat, sub, sub2, itemName) => {
+    const arr = getItems(inventory, loc, cat, sub, sub2);
+    if (!arr || !arr.length) return { count: 0, note: "" };
+    const found = arr.find((x) => (x?.name || "") === itemName);
+    return {
+      count: Number(found?.count || 0),
+      note: found?.note ?? "",
+    };
+  };
+
+  for (const key of allItemKeys) {
+    const [cat, sub, sub2, itemName] = key.split("|||");
+    for (const loc of locations) {
+      const { count: countNum, note } = findItem(loc, cat, sub || "", sub2 || "", itemName);
+      rows.push({
+        장소: loc,
+        상위카테고리: cat,
+        하위카테고리: sub || "",
+        최하위카테고리: sub2 || "",
+        품목명: itemName,
+        수량: toNaNString(countNum),  // ★ 0 → 'nan'
+        메모: note,                   // ★ 해당 장소의 아이템 메모 반영
+      });
+      // 합계는 숫자로 계산
+      addItemTotal(itemName, loc, countNum);
+    }
+  }
+
+  // 정렬: 장소 > 상위 > 하위 > 최하위 > 품목명
+  rows.sort((a, b) => {
+    if (a.장소 !== b.장소) return a.장소.localeCompare(b.장소);
+    if (a.상위카테고리 !== b.상위카테고리) return a.상위카테고리.localeCompare(b.상위카테고리);
+    if ((a.하위카테고리 || "") !== (b.하위카테고리 || "")) return (a.하위카테고리 || "").localeCompare(b.하위카테고리 || "");
+    if ((a.최하위카테고리 || "") !== (b.최하위카테고리 || "")) return (a.최하위카테고리 || "").localeCompare(b.최하위카테고리 || "");
+    return a.품목명.localeCompare(b.품목명);
+  });
+
+  // 시트1: 재고현황(일괄추가 호환)
+  const ws = XLSX.utils.json_to_sheet([], { header: HEADER });
+  XLSX.utils.sheet_add_aoa(ws, [HEADER], { origin: "A1" });
+  XLSX.utils.sheet_add_json(ws, rows, { origin: "A2", skipHeader: true });
+
+  // 자동 열너비
+  const colWidths = HEADER.map((h) => {
+    const maxLen = Math.max(
+      h.length,
+      ...rows.map((r) => (r[h] !== undefined && r[h] !== null ? String(r[h]).length : 0))
+    );
+    return { wch: Math.min(Math.max(10, maxLen + 2), 40) };
+  });
+  ws["!cols"] = colWidths;
+
+  // 시트2: 품목별 합계(숫자)
+  const totalRows = Object.entries(itemTotals).map(([name, info]) => ({
+    품목명: name,
+    총합계: info.합계,
+    ...info.장소별,
+  }));
+  const wsTotals = XLSX.utils.json_to_sheet(totalRows);
+
+  // 워크북 생성 및 저장
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "재고현황");
+  XLSX.utils.book_append_sheet(wb, wsTotals, "품목별 합계");
+
+  XLSX.writeFile(wb, `재고현황_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
 
   /* ===== 수량 증감 ===== */
   function handleUpdateItemCount(loc, cat, sub, idx, delta, sub2) {
     if (delta === 0) return;
-
     const list = getItems(inventory, loc, cat, sub, sub2);
     const itemName = list[idx]?.name;
     if (!itemName) return;
@@ -785,7 +827,9 @@ useEffect(() => {
     if (!input) return;
     const name = input.trim();
 
-    const existsAnywhere = locations.some((L) => getItems(inventory, L, cat, sub, sub2).some((it) => (it.name || "") === name));
+    const existsAnywhere = locations.some((L) =>
+      getItems(inventory, L, cat, sub, sub2).some((it) => (it.name || "") === name)
+    );
     if (existsAnywhere) return toast.error("동일한 품목명이 존재합니다");
 
     setInventory((prev) => {
@@ -855,7 +899,9 @@ useEffect(() => {
       return newInv;
     });
 
-    const now = new Date(), ts = now.toISOString(), time = now.toLocaleString();
+    const now = new Date(),
+      ts = now.toISOString(),
+      time = now.toLocaleString();
     const logObj = {
       key: `전체||${name}|OUT`,
       location: "전체",
@@ -869,7 +915,7 @@ useEffect(() => {
       operatorId: userId,
       operatorName: userName,
     };
-    setLogs((prev) => [{ id: `local-${ts}`, ...logObj }, ...prev]);
+    setLogs((prev) => [{ id: `local-${ts}`, ...logObj }, ...prev ]);
     const newRef = push(ref("logs/"));
     set(newRef, logObj).catch((err) => toast.error(`삭제 로그 기록 실패: ${err?.code || err?.message || err}`));
 
@@ -954,8 +1000,14 @@ useEffect(() => {
     }, 80);
   }
 
-  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  const toggleEditMenu = (key, e) => { if (e) stop(e); setEditKey((prev) => (prev === key ? null : key)); };
+  const stop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const toggleEditMenu = (key, e) => {
+    if (e) stop(e);
+    setEditKey((prev) => (prev === key ? null : key));
+  };
 
   /* ===== 카드 렌더 도우미 ===== */
   const renderItemRow = (loc, cat, sub, it, idx, sub2) => {
@@ -963,7 +1015,14 @@ useEffect(() => {
     const open = editKey === rowKey;
     const refKey = `${loc}-${cat}-${sub}${sub2 ? `-${sub2}` : ""}-${it.name}`;
     return (
-      <li key={`${it.name}-${idx}`} className={`item-row ${open ? "is-editing" : ""}`} ref={(el) => { if (el) categoryRefs.current[refKey] = el; }} onClick={stop}>
+      <li
+        key={`${it.name}-${idx}`}
+        className={`item-row ${open ? "is-editing" : ""}`}
+        ref={(el) => {
+          if (el) categoryRefs.current[refKey] = el;
+        }}
+        onClick={stop}
+      >
         <div className="item-text">
           <span className="item-name">
             <span className="item-title">{it.name}</span>
@@ -972,10 +1031,42 @@ useEffect(() => {
 
           <div className="item-edit">
             <div className="edit-toolbar" onClick={stop}>
-              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleUpdateItemCount(loc, cat, sub, idx, +1, sub2); }}>➕ 입고</button>
-              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleUpdateItemCount(loc, cat, sub, idx, -1, sub2); }}>➖ 출고</button>
-              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleEditItemName(loc, cat, sub, idx, sub2); }}>✏️ 이름</button>
-              <button className="btn btn-ghost btn-compact" onClick={(e) => { stop(e); handleEditItemNote(loc, cat, sub, idx, sub2); }}>📝 메모</button>
+              <button
+                className="btn btn-ghost btn-compact"
+                onClick={(e) => {
+                  stop(e);
+                  handleUpdateItemCount(loc, cat, sub, idx, +1, sub2);
+                }}
+              >
+                ➕ 입고
+              </button>
+              <button
+                className="btn btn-ghost btn-compact"
+                onClick={(e) => {
+                  stop(e);
+                  handleUpdateItemCount(loc, cat, sub, idx, -1, sub2);
+                }}
+              >
+                ➖ 출고
+              </button>
+              <button
+                className="btn btn-ghost btn-compact"
+                onClick={(e) => {
+                  stop(e);
+                  handleEditItemName(loc, cat, sub, idx, sub2);
+                }}
+              >
+                ✏️ 이름
+              </button>
+              <button
+                className="btn btn-ghost btn-compact"
+                onClick={(e) => {
+                  stop(e);
+                  handleEditItemNote(loc, cat, sub, idx, sub2);
+                }}
+              >
+                📝 메모
+              </button>
             </div>
           </div>
 
@@ -983,7 +1074,11 @@ useEffect(() => {
         </div>
 
         <div className="item-actions">
-          <button className="btn btn-secondary btn-compact" onClick={(e) => toggleEditMenu(rowKey, e)} title="이 아이템 수정">
+          <button
+            className="btn btn-secondary btn-compact"
+            onClick={(e) => toggleEditMenu(rowKey, e)}
+            title="이 아이템 수정"
+          >
             {open ? "닫기" : "수정"}
           </button>
         </div>
@@ -991,14 +1086,20 @@ useEffect(() => {
     );
   };
 
-  const renderLocCardBody = (loc) => (
+  const renderLocCardBody = (loc) =>
     Object.entries(subcategories).map(([cat, subs]) => (
       <details key={`${loc}-${cat}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}`] = el)}>
-        <summary className="summary">{catIcon(cat)} {cat}</summary>
+        <summary className="summary">
+          {catIcon(cat)} {cat}
+        </summary>
 
         {Array.isArray(subs) ? (
           subs.map((sub) => (
-            <details key={`${loc}-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
+            <details
+              key={`${loc}-${cat}-${sub}`}
+              ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)}
+              className="sub-details"
+            >
               <summary className="sub-summary">▸ {sub}</summary>
               <ul className="item-list">
                 {getItems(inventory, loc, cat, sub).map((it, idx) => renderItemRow(loc, cat, sub, it, idx))}
@@ -1006,41 +1107,60 @@ useEffect(() => {
             </details>
           ))
         ) : (
-          Object.entries(subs).map(([sub, subs2]) => (
+          Object.entries(subs).map(([sub, subs2]) =>
             Array.isArray(subs2) ? (
-              <details key={`${loc}-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
+              <details
+                key={`${loc}-${cat}-${sub}`}
+                ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)}
+                className="sub-details"
+              >
                 <summary className="sub-summary">▸ {sub}</summary>
                 <ul className="item-list">
                   {getItems(inventory, loc, cat, sub).map((it, idx) => renderItemRow(loc, cat, sub, it, idx))}
                 </ul>
               </details>
             ) : (
-              <details key={`${loc}-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)} className="sub-details">
+              <details
+                key={`${loc}-${cat}-${sub}`}
+                ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}`] = el)}
+                className="sub-details"
+              >
                 <summary className="sub-summary">▸ {sub}</summary>
                 {Object.keys(subs2).map((sub2) => (
-                  <details key={`${loc}-${cat}-${sub}-${sub2}`} ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}-${sub2}`] = el)} className="sub-details">
+                  <details
+                    key={`${loc}-${cat}-${sub}-${sub2}`}
+                    ref={(el) => (categoryRefs.current[`${loc}-${cat}-${sub}-${sub2}`] = el)}
+                    className="sub-details"
+                  >
                     <summary className="sub-summary">▸ {sub2}</summary>
                     <ul className="item-list">
-                      {getItems(inventory, loc, cat, sub, sub2).map((it, idx) => renderItemRow(loc, cat, sub, it, idx, sub2))}
+                      {getItems(inventory, loc, cat, sub, sub2).map((it, idx) =>
+                        renderItemRow(loc, cat, sub, it, idx, sub2)
+                      )}
                     </ul>
                   </details>
                 ))}
               </details>
             )
-          ))
+          )
         )}
       </details>
-    ))
-  );
+    ));
 
-  const renderSummaryCardBody = () => (
+  const renderSummaryCardBody = () =>
     Object.entries(subcategories).map(([cat, subs]) => (
       <details key={`전체-${cat}`} ref={(el) => (categoryRefs.current[`전체-${cat}`] = el)}>
-        <summary className="summary">{catIcon(cat)} {cat}</summary>
+        <summary className="summary">
+          {catIcon(cat)} {cat}
+        </summary>
 
         {Array.isArray(subs) ? (
           subs.map((sub) => (
-            <details key={`전체-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
+            <details
+              key={`전체-${cat}-${sub}`}
+              ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)}
+              className="sub-details"
+            >
               <summary className="sub-summary">▸ {sub}</summary>
               <ul className="item-list">
                 {Object.entries(
@@ -1051,7 +1171,14 @@ useEffect(() => {
                     return acc;
                   }, {})
                 ).map(([name, count]) => (
-                  <li key={`전체-${cat}-${sub}-${name}`} className="item-row" ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}-${name}`] = el; }} onClick={stop}>
+                  <li
+                    key={`전체-${cat}-${sub}-${name}`}
+                    className="item-row"
+                    ref={(el) => {
+                      if (el) categoryRefs.current[`전체-${cat}-${sub}-${name}`] = el;
+                    }}
+                    onClick={stop}
+                  >
                     <div className="item-text">
                       <span className="item-name">
                         <span className="item-title">{name}</span>
@@ -1064,9 +1191,13 @@ useEffect(() => {
             </details>
           ))
         ) : (
-          Object.entries(subs).map(([sub, subs2]) => (
+          Object.entries(subs).map(([sub, subs2]) =>
             Array.isArray(subs2) ? (
-              <details key={`전체-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
+              <details
+                key={`전체-${cat}-${sub}`}
+                ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)}
+                className="sub-details"
+              >
                 <summary className="sub-summary">▸ {sub}</summary>
                 <ul className="item-list">
                   {Object.entries(
@@ -1077,7 +1208,14 @@ useEffect(() => {
                       return acc;
                     }, {})
                   ).map(([name, count]) => (
-                    <li key={`전체-${cat}-${sub}-${name}`} className="item-row" ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}-${name}`] = el; }} onClick={stop}>
+                    <li
+                      key={`전체-${cat}-${sub}-${name}`}
+                      className="item-row"
+                      ref={(el) => {
+                        if (el) categoryRefs.current[`전체-${cat}-${sub}-${name}`] = el;
+                      }}
+                      onClick={stop}
+                    >
                       <div className="item-text">
                         <span className="item-name">
                           <span className="item-title">{name}</span>
@@ -1089,10 +1227,18 @@ useEffect(() => {
                 </ul>
               </details>
             ) : (
-              <details key={`전체-${cat}-${sub}`} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)} className="sub-details">
+              <details
+                key={`전체-${cat}-${sub}`}
+                ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}`] = el)}
+                className="sub-details"
+              >
                 <summary className="sub-summary">▸ {sub}</summary>
                 {Object.keys(subs2).map((sub2) => (
-                  <details key={`전체-${cat}-${sub}-${sub2}`} ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}-${sub2}`] = el)} className="sub-details">
+                  <details
+                    key={`전체-${cat}-${sub}-${sub2}`}
+                    ref={(el) => (categoryRefs.current[`전체-${cat}-${sub}-${sub2}`] = el)}
+                    className="sub-details"
+                  >
                     <summary className="sub-summary">▸ {sub2}</summary>
                     <ul className="item-list">
                       {Object.entries(
@@ -1103,7 +1249,14 @@ useEffect(() => {
                           return acc;
                         }, {})
                       ).map(([name, count]) => (
-                        <li key={`전체-${cat}-${sub}-${sub2}-${name}`} className="item-row" ref={(el) => { if (el) categoryRefs.current[`전체-${cat}-${sub}-${sub2}-${name}`] = el; }} onClick={stop}>
+                        <li
+                          key={`전체-${cat}-${sub}-${sub2}-${name}`}
+                          className="item-row"
+                          ref={(el) => {
+                            if (el) categoryRefs.current[`전체-${cat}-${sub}-${sub2}-${name}`] = el;
+                          }}
+                          onClick={stop}
+                        >
                           <div className="item-text">
                             <span className="item-name">
                               <span className="item-title">{name}</span>
@@ -1117,11 +1270,10 @@ useEffect(() => {
                 ))}
               </details>
             )
-          ))
+          )
         )}
       </details>
-    ))
-  );
+    ));
 
   /* ===== 렌더 ===== */
   return (
@@ -1129,27 +1281,28 @@ useEffect(() => {
       <FixedBg src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`} overlay="rgba(0,0,0,.18)" />
       <NeonBackdrop />
       <header className="topbar glass">
-      {/* src/App.js (Home 헤더 타이틀 교체)*/}
-      <h1 className="logo">
-        <span className="glow-dot" /> DOKKEBI<span className="thin">/</span>INVENTORY
-        <button
-          type="button"
-          className="ver-chip"
-          title={`버전: ${APP_VERSION}${isAdmin ? " (더블클릭하여 라벨 변경)" : ""}`}
-          onDoubleClick={() => {
-            if (!isAdmin) return;
-            const next = prompt(
-              "버전 표시에 사용할 라벨을 입력하세요 (예: 1.0.5):",
-              localStorage.getItem("do-kkae-bi-app-version") || APP_VERSION
-            );
-            if (next === null) return;
-            localStorage.setItem("do-kkae-bi-app-version", String(next).trim());
-            window.location.reload();
-          }}
-        >
-          v{APP_VERSION}
-        </button>
-      </h1>
+        {/* 헤더 타이틀 */}
+        <h1 className="logo">
+          <span className="glow-dot" /> DOKKEBI<span className="thin">/</span>INVENTORY
+          <button
+            type="button"
+            className="ver-chip"
+            title={`버전: ${APP_VERSION}${isAdmin ? " (더블클릭하여 라벨 변경)" : ""}`}
+            onDoubleClick={() => {
+              if (!isAdmin) return;
+              const next = prompt(
+                "버전 표시에 사용할 라벨을 입력하세요 (예: 1.0.5):",
+                localStorage.getItem("do-kkae-bi-app-version") || APP_VERSION
+              );
+              if (next === null) return;
+              localStorage.setItem("do-kkae-bi-app-version", String(next).trim());
+              window.location.hash = "#/"; // 라벨 즉시 반영 (새로고침 없음)
+            }}
+          >
+            v{APP_VERSION}
+          </button>
+        </h1>
+
         <div className="toolbar">
           <input
             className="search-input"
@@ -1169,40 +1322,43 @@ useEffect(() => {
             >
               📦 데이터
             </button>
-          {/*src/App.js (데이터 메뉴 JSX 교체: 삼항/중괄호 정정 + 숨김 input 위치 고정)*/}
-          {dataMenuOpen && (
-            <div className="menu" role="menu" onClick={(e) => e.stopPropagation()}>
-              <button
-                className="menu-item"
-                onClick={() => { exportInventoryExcel(); setDataMenuOpen(false); }}
-              >
-                📤 재고 Excel 내보내기
-              </button>
 
-              {isAdmin ? (
+            {dataMenuOpen && (
+              <div className="menu" role="menu" onClick={(e) => e.stopPropagation()}>
                 <button
                   className="menu-item"
-                  onClick={handleImportClick}
-                  title="CSV/XLSX에서 재고를 일괄 추가합니다(로그 미생성)"
+                  onClick={() => {
+                    exportInventoryExcel();
+                    setDataMenuOpen(false);
+                  }}
                 >
-                  📥 일괄 추가 (베타)
+                  📤 재고 Excel 내보내기
                 </button>
-              ) : (
-                <button className="menu-item disabled" disabled title="관리자 전용">
-                  📥 가져오기 (베타)
-                </button>
-              )}
 
-              {/* 숨김 파일 입력 — 삼항 밖, 메뉴 내부에 고정 */}
-              <input
-                ref={importInputRef}
-                type="file"
-                accept=".xlsx,.csv"
-                style={{ display: "none" }}
-                onChange={onImportFileChange}
-              />
-            </div>
-          )}
+                {isAdmin ? (
+                  <button
+                    className="menu-item"
+                    onClick={handleImportClick}
+                    title="CSV/XLSX에서 재고를 일괄 추가합니다(로그 미생성)"
+                  >
+                    📥 일괄 추가 (베타)
+                  </button>
+                ) : (
+                  <button className="menu-item disabled" disabled title="관리자 전용">
+                    📥 가져오기 (베타)
+                  </button>
+                )}
+
+                {/* 숨김 파일 입력 */}
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".xlsx,.csv"
+                  style={{ display: "none" }}
+                  onChange={onImportFileChange}
+                />
+              </div>
+            )}
           </div>
 
           <button className="btn btn-secondary" onClick={() => navigate("/logs")}>
@@ -1213,7 +1369,7 @@ useEffect(() => {
             <button
               className="btn btn-ghost"
               onClick={() => {
-                hardLogout();   
+                hardLogout();
               }}
             >
               🚪 로그아웃
@@ -1239,8 +1395,12 @@ useEffect(() => {
               <ul className="result-list">
                 {aggregated.map((e, i) => (
                   <li key={i} className="result-item">
-                    <div className="result-name link" onClick={() => scrollToCategory("전체", e.cat, e.sub, e.name, e.sub2)}>
-                      [{e.cat} &gt; {e.sub}{e.sub2 ? ` > ${e.sub2}` : ""}] {e.name} <span className="chip">{e.total}개</span>
+                    <div
+                      className="result-name link"
+                      onClick={() => scrollToCategory("전체", e.cat, e.sub, e.name, e.sub2)}
+                    >
+                      [{e.cat} &gt; {e.sub}
+                      {e.sub2 ? ` > ${e.sub2}` : ""}] {e.name} <span className="chip">{e.total}개</span>
                     </div>
                     <div className="result-locs">
                       {locations.map((L) => (
@@ -1280,37 +1440,37 @@ useEffect(() => {
         </section>
       )}
 
-      {/* 카드 그리드 (장소 3 + 전체 1 = 2×2 배열, ≥1100px에서 전체 중앙) */}
+      {/* 카드 그리드 (장소 3 + 전체 1 = 2×2 배열) */}
       <section className="grid summary-grid">
         {/* 장소 카드 */}
         {locations.map((loc) => (
           <div key={loc} className="card glass hover-rise" ref={(el) => (cardRefs.current[loc] = el)}>
-          <div className="card-head head-split">
-            <button
-              type="button"
-              className="head-zoom"
-              onClick={() => setOpenPanel({ kind: "loc", loc })}
-              title="확대보기"
-              aria-label={`${loc} 확대보기`}
-            >
-              <h2 className="card-title">{loc}</h2>
-              <span className="head-hint">확대보기</span>
-            </button>
-            <div className="head-actions">
+            <div className="card-head head-split">
               <button
-                className="btn btn-primary"
-                onClick={(e) => { e.stopPropagation(); handleAddNewItem(loc); }}
+                type="button"
+                className="head-zoom"
+                onClick={() => setOpenPanel({ kind: "loc", loc })}
+                title="확대보기"
+                aria-label={`${loc} 확대보기`}
               >
-                +추가
+                <h2 className="card-title">{loc}</h2>
+                <span className="head-hint">확대보기</span>
               </button>
+              <div className="head-actions">
+                <button
+                  className="btn btn-primary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAddNewItem(loc);
+                  }}
+                >
+                  +추가
+                </button>
+              </div>
             </div>
+            <div className="card-body">{renderLocCardBody(loc)}</div>
           </div>
-            <div className="card-body">
-              {renderLocCardBody(loc)}
-            </div>
-         </div>
         ))}
-        
 
         {/* 전체 카드 (요약) */}
         <div className="card glass hover-rise card--summary" ref={(el) => (cardRefs.current["summary"] = el)}>
@@ -1326,14 +1486,18 @@ useEffect(() => {
               <span className="head-hint">확대보기</span>
             </button>
             <div className="head-actions">
-              <button className="btn btn-danger" onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}>
+              <button
+                className="btn btn-danger"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteItem();
+                }}
+              >
                 /삭제
               </button>
             </div>
           </div>
-            <div className="card-body">
-              {renderSummaryCardBody()}
-          </div>
+          <div className="card-body">{renderSummaryCardBody()}</div>
         </div>
       </section>
 
@@ -1345,15 +1509,13 @@ useEffect(() => {
               <h3 className="popup-title">
                 {openPanel.kind === "summary" ? "전체 (확대 보기)" : `${openPanel.loc} (확대 보기)`}
               </h3>
-              <button className="btn btn-ghost" onClick={() => setOpenPanel(null)}>닫기</button>
+              <button className="btn btn-ghost" onClick={() => setOpenPanel(null)}>
+                닫기
+              </button>
             </div>
 
             <div className="popup-body">
-              {openPanel.kind === "summary" ? (
-                renderSummaryCardBody()
-              ) : (
-                renderLocCardBody(openPanel.loc)
-              )}
+              {openPanel.kind === "summary" ? renderSummaryCardBody() : renderLocCardBody(openPanel.loc)}
             </div>
           </div>
         </div>
@@ -1361,7 +1523,8 @@ useEffect(() => {
 
       <footer className="site-footer">
         <p>
-          © 강원도립대 드론융합과 24학번 최석민 - 드론축구단 재고·입출고 관리 콘솔<br />
+          © 강원도립대 드론융합과 24학번 최석민 - 드론축구단 재고·입출고 관리 콘솔
+          <br />
           문의: <a href="mailto:gwdokkebinv@gmail.com">gwdokkebinv@gmail.com</a>
         </p>
       </footer>
@@ -1419,7 +1582,10 @@ function LogsPage({ logs, setLogs }) {
   }
 
   function editReason(i) {
-    if (!logs[i]?.id) { toast.error("동기화 중입니다. 잠시 후 다시 시도하세요."); return; }
+    if (!logs[i]?.id) {
+      toast.error("동기화 중입니다. 잠시 후 다시 시도하세요.");
+      return;
+    }
     const note = prompt("메모:", logs[i].reason || "");
     if (note === null) return;
 
@@ -1433,7 +1599,10 @@ function LogsPage({ logs, setLogs }) {
   }
 
   function deleteLog(i) {
-    if (!logs[i]?.id) { toast.error("동기화 중입니다. 잠시 후 다시 시도하세요."); return; }
+    if (!logs[i]?.id) {
+      toast.error("동기화 중입니다. 잠시 후 다시 시도하세요.");
+      return;
+    }
     if (!window.confirm("삭제하시겠습니까?")) return;
 
     const id = logs[i].id;
@@ -1445,19 +1614,35 @@ function LogsPage({ logs, setLogs }) {
 
   function exportCSV() {
     const data = filteredList.map((l) => ({
-      시간: l.time, ID: l.operatorId || "", 이름: l.operatorName || "", 장소: l.location,
-      상위카테고리: l.category, 하위카테고리: l.subcategory, 품목: l.item, 증감: l.change, 메모: l.reason,
+      시간: l.time,
+      ID: l.operatorId || "",
+      이름: l.operatorName || "",
+      장소: l.location,
+      상위카테고리: l.category,
+      하위카테고리: l.subcategory,
+      품목: l.item,
+      증감: l.change,
+      메모: l.reason,
     }));
     const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(data));
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "기록.csv"; a.click();
+    a.href = url;
+    a.download = "기록.csv";
+    a.click();
   }
   function exportExcel() {
     const data = filteredList.map((l) => ({
-      시간: l.time, ID: l.operatorId || "", 이름: l.operatorName || "", 장소: l.location,
-      상위카테고리: l.category, 하위카테고리: l.subcategory, 품목: l.item, 증감: l.change, 메모: l.reason,
+      시간: l.time,
+      ID: l.operatorId || "",
+      이름: l.operatorName || "",
+      장소: l.location,
+      상위카테고리: l.category,
+      하위카테고리: l.subcategory,
+      품목: l.item,
+      증감: l.change,
+      메모: l.reason,
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -1471,29 +1656,79 @@ function LogsPage({ logs, setLogs }) {
       <NeonBackdrop />
 
       <header className="topbar glass">
-        <button className="btn btn-ghost" onClick={() => navigate("/")}>← 돌아가기</button>
+        <button className="btn btn-ghost" onClick={() => navigate("/")}>
+          ← 돌아가기
+        </button>
         <h1 className="logo">📘입출고 기록</h1>
 
         <div className="toolbar">
-          <input className="search-input" type="text" value={itemKeyword} onChange={(e) => setItemKeyword(e.target.value)} placeholder="품목 검색 (부분 일치)" />
-          <select className="search-input" value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} aria-label="장소 필터">
+          <input
+            className="search-input"
+            type="text"
+            value={itemKeyword}
+            onChange={(e) => setItemKeyword(e.target.value)}
+            placeholder="품목 검색 (부분 일치)"
+          />
+          <select
+            className="search-input"
+            value={locationFilter}
+            onChange={(e) => setLocationFilter(e.target.value)}
+            aria-label="장소 필터"
+          >
             <option value="">전체 장소</option>
-            {locations.map((L) => (<option key={L} value={L}>{L}</option>))}
+            {locations.map((L) => (
+              <option key={L} value={L}>
+                {L}
+              </option>
+            ))}
           </select>
-          <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="search-input" />
+          <input
+            type="date"
+            value={filterDate}
+            onChange={(e) => setFilterDate(e.target.value)}
+            className="search-input"
+          />
 
-          <button className="btn btn-secondary" onClick={() => { setFilterDate(""); setItemKeyword(""); setLocationFilter(""); }}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              setFilterDate("");
+              setItemKeyword("");
+              setLocationFilter("");
+            }}
+          >
             필터 해제
           </button>
 
           <div className="menu-wrap" ref={menuRef}>
-            <button className="btn btn-secondary" onClick={() => setExportOpen((v) => !v)} aria-haspopup="menu" aria-expanded={exportOpen}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setExportOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={exportOpen}
+            >
               ⬇ 내보내기
             </button>
             {exportOpen && (
               <div className="menu menu-logs" role="menu">
-                <button className="menu-item" onClick={() => { exportCSV(); setExportOpen(false); }}>📄 CSV 내보내기</button>
-                <button className="menu-item" onClick={() => { exportExcel(); setExportOpen(false); }}>📑 Excel 내보내기</button>
+                <button
+                  className="menu-item"
+                  onClick={() => {
+                    exportCSV();
+                    setExportOpen(false);
+                  }}
+                >
+                  📄 CSV 내보내기
+                </button>
+                <button
+                  className="menu-item"
+                  onClick={() => {
+                    exportExcel();
+                    setExportOpen(false);
+                  }}
+                >
+                  📑 Excel 내보내기
+                </button>
               </div>
             )}
           </div>
@@ -1521,17 +1756,24 @@ function LogsPage({ logs, setLogs }) {
                   <li key={`${l.id || "local"}-${i}`} className="log-row">
                     <div className="log-text">
                       <div className="log-line">
-                        <span className="time">[{l.time}]</span> {l.location} &gt; {l.category} &gt; {l.subcategory} / <strong>{l.item}</strong>
+                        <span className="time">[{l.time}]</span> {l.location} &gt; {l.category} &gt; {l.subcategory} /{" "}
+                        <strong>{l.item}</strong>
                       </div>
                       <div className={l.change > 0 ? "mark in" : "mark out"}>
                         {l.change > 0 ? `입고 +${l.change}` : `출고 -${-l.change}`}
                       </div>
-                      <div className="muted small">👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}</div>
+                      <div className="muted small">
+                        👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}
+                      </div>
                       {l.reason && <div className="log-note">메모: {l.reason}</div>}
                     </div>
                     <div className="log-actions">
-                      <button className="btn btn-ghost" onClick={() => editReason(idx)}>{l.reason ? "메모 수정" : "메모 추가"}</button>
-                      <button className="btn btn-danger" onClick={() => deleteLog(idx)}>삭제</button>
+                      <button className="btn btn-ghost" onClick={() => editReason(idx)}>
+                        {l.reason ? "메모 수정" : "메모 추가"}
+                      </button>
+                      <button className="btn btn-danger" onClick={() => deleteLog(idx)}>
+                        삭제
+                      </button>
                     </div>
                   </li>
                 );
@@ -1551,104 +1793,73 @@ export default function AppWrapper() {
   const [inventory, setInventory] = useState(getLocalInventory);
   const [searchTerm, setSearchTerm] = useState("");
   const [logs, setLogs] = useState(getLocalLogs);
+
+  // 🔄 auth 변경 시 재렌더를 트리거하는 틱
+  const [authTick, setAuthTick] = useState(0);
+  useEffect(() => {
+    const onAuth = () => setAuthTick((v) => v + 1);
+    window.addEventListener("dokkebi-auth-changed", onAuth);
+    window.addEventListener("storage", onAuth);
+    return () => {
+      window.removeEventListener("dokkebi-auth-changed", onAuth);
+      window.removeEventListener("storage", onAuth);
+    };
+    
+  }, [authTick]);
+
+  // 매 렌더마다 최신 스토리지 값을 읽음 (authTick 변화로 재계산됨)
   const isAdmin = getLocalAdmin();
   const userId = getLocalUserId();
   const userName = getLocalUserName();
 
-  // ⬇️ 추가: 로그인/세션 존재 여부
-  const isLoggedIn = isAdmin || (userId && userName);
+   const isLoggedIn = !!(isAdmin || (userId && userName));
 
   const applyingCloudRef = useRef({ inv: false, logs: false });
   const invStateRef = useRef(inventory);
   const logsStateRef = useRef(logs);
 
-// AppWrapper 최상단 상태 선언들 아래에 추가
-const bootRef = useRef({ inv:false, logs:false, fired:false });
-const fireReadyOnce = () => {
-  if (bootRef.current.fired) return;
-  bootRef.current.fired = true;
-  try { window.dispatchEvent(new Event("dokkebi-ready")); } catch (e) {}
-};
+  const bootRef = useRef({ inv: false, logs: false, fired: false });
+  const fireReadyOnce = () => {
+    if (bootRef.current.fired) return;
+    bootRef.current.fired = true;
+    try {
+      window.dispatchEvent(new Event("dokkebi-ready"));
+    } catch (e) {}
+  };
 
-    // 앱 부팅 시 스플래시에 버전 송출 + 로컬스토리지 갱신(낡은 값만 덮어씀)
+  // ✅ 스플래시 폴백 타이머 ref (AppWrapper 전용)
+  const splashTimeoutRef = useRef(null);
+
+  // 앱 부팅: 버전 라벨 갱신 + 스플래시 닫기 트리거
   useEffect(() => {
     try {
-      const envV = process.env.REACT_APP_VERSION || 'dev';
-      const cur  = localStorage.getItem('do-kkae-bi-app-version') || '';
-      const parse = (v) => String(v).split('.').map(n => parseInt(n,10) || 0);
+      const envV = process.env.REACT_APP_VERSION || "dev";
+      const cur = localStorage.getItem("do-kkae-bi-app-version") || "";
+      const parse = (v) => String(v).split(".").map((n) => parseInt(n, 10) || 0);
       const older = (() => {
         if (!cur) return true;
-        const [a1,a2,a3] = parse(cur);
-        const [b1,b2,b3] = parse(envV);
-        if (a1!==b1) return a1<b1;
-        if (a2!==b2) return a2<b2;
-        return a3<b3;
+        const [a1, a2, a3] = parse(cur);
+        const [b1, b2, b3] = parse(envV);
+        if (a1 !== b1) return a1 < b1;
+        if (a2 !== b2) return a2 < b2;
+        return a3 < b3;
       })();
-      if (older) localStorage.setItem('do-kkae-bi-app-version', envV);
-      // 스플래시에 현재 버전 전달 → 라벨 즉시 갱신
-      window.dispatchEvent(new CustomEvent('dokkaebi-version', { detail: envV }));
+      if (older) localStorage.setItem("do-kkae-bi-app-version", envV);
+      window.dispatchEvent(new CustomEvent("dokkaebi-version", { detail: envV }));
     } catch {}
-    // 앱 준비 완료 → 스플래시 닫기
-    window.dispatchEvent(new Event('dokkaebi-ready'));
+    window.dispatchEvent(new Event("dokkebi-ready"));
   }, []);
 
-// (있다면) ⛔️ 제거: 마운트 직후 #app-splash를 즉시 hide/remove 하던 useEffect
-// useEffect(() => { const el = document.getElementById("app-splash"); ... }, []);
-
-// 클라우드→로컬 동기화 useEffect 안의 onValue 핸들러를 살짝 보강
-useEffect(() => {
-  const invRefFB = ref("inventory/");
-  const logRefFB = ref("logs/");
-
-  const unsubInv = onValue(invRefFB, (snap) => {
-    if (!snap.exists()) return;
-    const cloud = snap.val();
-    if (JSON.stringify(cloud) !== JSON.stringify(invStateRef.current)) {
-      applyingCloudRef.current.inv = true;
-      setInventory(cloud);
+  // 마운트 시 세션 타임아웃 검증(10분)
+  useEffect(() => {
+    const ts = Number(localStorage.getItem("do-kkae-bi-login-ts") || 0);
+    const LIMIT = 10 * 60 * 1000;
+    if (ts && Date.now() - ts > LIMIT) {
+      hardLogout();
     }
-    if (!bootRef.current.inv) {
-      bootRef.current.inv = true;
-      if (bootRef.current.logs) fireReadyOnce();
-    }
-  });
+  }, []);
 
-  const unsubLogs = onValue(logRefFB, (snap) => {
-    if (!snap.exists()) return;
-    const normalized = normalizeLogsVal(snap.val()).sort((a, b) => new Date(b.ts) - new Date(a.ts));
-    if (JSON.stringify(normalized) !== JSON.stringify(logsStateRef.current)) {
-      applyingCloudRef.current.logs = true;
-      setLogs(normalized);
-    }
-    if (!bootRef.current.logs) {
-      bootRef.current.logs = true;
-      if (bootRef.current.inv) fireReadyOnce();
-    }
-  });
-
-  return () => { unsubInv(); unsubLogs(); };
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
-
-// 폴백 — 혹시 RTDB가 느릴 때도 사용자 묶이지 않도록 8초 후 강제 해제
-useEffect(() => {
-  const t = setTimeout(() => fireReadyOnce(), 8000);
-  return () => clearTimeout(t);
-}, []);
-
-
-useEffect(() => {
-  const el = document.getElementById("app-splash");
-  if (el) {
-    el.classList.add("hide");
-    setTimeout(() => el.remove(), 400);
-  }
-}, []);
-
-  useEffect(() => { invStateRef.current = inventory; }, [inventory]);
-  useEffect(() => { logsStateRef.current = logs; }, [logs]);
-
-  // 클라우드→로컬
+  // 클라우드 → 로컬 동기화
   useEffect(() => {
     const invRefFB = ref("inventory/");
     const logRefFB = ref("logs/");
@@ -1660,6 +1871,10 @@ useEffect(() => {
         applyingCloudRef.current.inv = true;
         setInventory(cloud);
       }
+      if (!bootRef.current.inv) {
+        bootRef.current.inv = true;
+        if (bootRef.current.logs) fireReadyOnce();
+      }
     });
 
     const unsubLogs = onValue(logRefFB, (snap) => {
@@ -1669,31 +1884,77 @@ useEffect(() => {
         applyingCloudRef.current.logs = true;
         setLogs(normalized);
       }
+      if (!bootRef.current.logs) {
+        bootRef.current.logs = true;
+        if (bootRef.current.inv) fireReadyOnce();
+      }
     });
 
-    return () => { unsubInv(); unsubLogs(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      unsubInv();
+      unsubLogs();
+    };
   }, []);
 
-  // 로컬→클라우드 (inventory set 전체 저장)
-    //src/App.js (AppWrapper 내부, inventory 저장 useEffect 교체)
-    useEffect(() => {
-      if (applyingCloudRef.current.inv) { applyingCloudRef.current.inv = false; return; }
-
-      const { inv: safeInv, bad } = sanitizeInventoryKeys(inventory);
-      if (bad.length) {
-        console.warn("[Inventory sanitize] removed invalid keys:", bad.slice(0, 20), bad.length > 20 ? `…(+${bad.length-20})` : "");
+  // RTDB 지연 대비 8초 폴백(스플래시 강제 닫기)
+  useEffect(() => {
+    splashTimeoutRef.current = setTimeout(() => {
+      fireReadyOnce();   // 8초 동안 ready가 안 오면 강제로 스플래시 닫기
+    }, 8000);
+    return () => {
+      if (splashTimeoutRef.current) {
+        clearTimeout(splashTimeoutRef.current);
+        splashTimeoutRef.current = null;
       }
+    };
+  }, []);
 
-      saveLocalInventory(safeInv);
-      set(ref("inventory/"), safeInv).catch((err) => {
-        console.error("Firebase set failed:", err);
-        toast.error("클라우드 저장 실패: 잘못된 키가 포함되어 있습니다.");
-      });
-    }, [inventory]);
+  // 스플래시: ready 이벤트 수신 시 닫기 (+ 폴백 타이머 취소)
+  useEffect(() => {
+    const el = document.getElementById("app-splash");
+    if (!el) return;
+    const onReady = () => {
+      el.classList.add("hide");
+      setTimeout(() => el.remove(), 400);
+      if (splashTimeoutRef.current) {
+        clearTimeout(splashTimeoutRef.current);
+        splashTimeoutRef.current = null;
+      }
+    };
+    window.addEventListener("dokkebi-ready", onReady);
+    return () => window.removeEventListener("dokkebi-ready", onReady);
+  }, []);
 
+  // 최신 스냅샷 보관(비교용)
+  useEffect(() => {
+    invStateRef.current = inventory;
+  }, [inventory]);
+  useEffect(() => {
+    logsStateRef.current = logs;
+  }, [logs]);
 
-  // 10분 무활동 자동 로그아웃(선택적)
+  // 로컬→클라우드 (inventory set 전체 저장)
+  useEffect(() => {
+    if (applyingCloudRef.current.inv) {
+      applyingCloudRef.current.inv = false;
+      return;
+    }
+    const { inv: safeInv, bad } = sanitizeInventoryKeys(inventory);
+    if (bad.length) {
+      console.warn(
+        "[Inventory sanitize] removed invalid keys:",
+        bad.slice(0, 20),
+        bad.length > 20 ? `…(+${bad.length - 20})` : ""
+      );
+    }
+    saveLocalInventory(safeInv);
+    set(ref("inventory/"), safeInv).catch((err) => {
+      console.error("Firebase set failed:", err);
+      toast.error("클라우드 저장 실패: 잘못된 키가 포함되어 있습니다.");
+    });
+  }, [inventory]);
+
+  // 10분 무활동 자동 로그아웃(관리자만)
   useEffect(() => {
     if (!isAdmin) return;
     const LOGOUT_AFTER = 10 * 60 * 1000;
@@ -1701,7 +1962,7 @@ useEffect(() => {
     const reset = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-      hardLogout();   
+        hardLogout();
       }, LOGOUT_AFTER);
     };
     const events = ["mousemove", "keydown", "click", "touchstart", "scroll", "visibilitychange"];
@@ -1718,14 +1979,21 @@ useEffect(() => {
       <Toaster
         position="bottom-right"
         toastOptions={{
-          style: { background: "#0b1020", color: "#e6f7ff", border: "1px solid #243056", borderRadius: "14px", fontWeight: 600, fontSize: "1.02rem" },
+          style: {
+            background: "#0b1020",
+            color: "#e6f7ff",
+            border: "1px solid #243056",
+            borderRadius: "14px",
+            fontWeight: 600,
+            fontSize: "1.02rem",
+          },
           success: { style: { background: "#07101f", color: "#53ffe9" } },
           error: { style: { background: "#160b12", color: "#ff7ba1" } },
         }}
       />
       <Router>
         <Routes>
-          {/* ⬇️ 로그인 안돼 있으면 무조건 /login 으로 보냄 */}
+          {/* 로그인 안돼 있으면 /login 으로 보냄 */}
           <Route
             path="/"
             element={
@@ -1749,16 +2017,10 @@ useEffect(() => {
 
           <Route
             path="/logs"
-            element={
-              isLoggedIn ? (
-                <LogsPage logs={logs} setLogs={setLogs} />
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            }
+            element={isLoggedIn ? <LogsPage logs={logs} setLogs={setLogs} /> : <Navigate to="/login" replace />}
           />
 
-          {/* ⬇️ 이미 로그인돼 있으면 / 로 되돌림 */}
+          {/* 이미 로그인돼 있으면 / 로 되돌림 */}
           <Route
             path="/login"
             element={
@@ -1768,11 +2030,20 @@ useEffect(() => {
                 <LoginPage
                   onLogin={({ pw, uid, name }) => {
                     if (pw === "2500" && uid && name) {
+                      // 저장소 갱신
                       saveLocalAdmin(true);
+                      sessionStorage.setItem("do-kkae-bi-admin", "true");
+                      localStorage.setItem("do-kkae-bi-login-ts", String(Date.now()));
                       localStorage.setItem("do-kkae-bi-user-id", uid);
                       localStorage.setItem("do-kkae-bi-user-name", name);
+
+                      // 상태 갱신 (리로드 없이 가드 통과)
+                      setAuthTick((v) => v + 1);
+                      toast.success("로그인 성공");
+
+                      // 라우팅 + 렌더 트리거 (새로고침 불필요)
                       window.location.hash = "#/";
-                      window.location.reload();
+                      try { window.dispatchEvent(new Event("dokkebi-auth-changed")); } catch {}
                     } else {
                       toast.error("입력 정보를 확인해 주세요.");
                     }
@@ -1781,10 +2052,8 @@ useEffect(() => {
               )
             }
           />
-          <Route
-            path="*"
-            element={<Navigate to={isLoggedIn ? "/" : "/login"} replace />}
-          />
+
+          <Route path="*" element={<Navigate to={isLoggedIn ? "/" : "/login"} replace />} />
         </Routes>
       </Router>
     </>
