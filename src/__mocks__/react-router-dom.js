@@ -2,7 +2,9 @@
 module.exports = {
   BrowserRouter: ({ children }) => children,
   MemoryRouter: ({ children }) => children,
+  HashRouter: ({ children }) => children,
   Routes: ({ children }) => children,
   Route: ({ element }) => element,
-  useNavigate: () => () => {}
+  Navigate: ({ to }) => `navigate:${to}`,
+  useNavigate: () => () => {},
 };

@@ -931,3 +931,65 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
 @media (prefers-reduced-motion: reduce) {
   #app-splash { transition: opacity .01s linear; }
 }
+
+.item-row-highlight{
+  animation: item-highlight 1.6s ease;
+  border-radius: 10px;
+}
+@keyframes item-highlight{
+  0%{ background: rgba(83,255,233,.30); box-shadow: 0 0 0 0 rgba(83,255,233,.5); }
+  100%{ background: transparent; box-shadow: none; }
+}
+
+.result-actions{ display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+
+.tutorial-popup{ width:min(760px,92vw); }
+.tutorial-step{
+  width:100%; display:flex; align-items:flex-start; gap:10px; text-align:left;
+  background:#0a1634; border:1px solid var(--line); border-radius:12px; color:var(--text);
+  padding:10px 12px; margin-bottom:8px; cursor:pointer;
+}
+.tutorial-step.is-active{ border-color:#53ffe9; box-shadow:0 0 0 1px rgba(83,255,233,.24) inset; }
+.tutorial-step small{ display:block; margin-top:4px; color:#b8caef; }
+.tutorial-bullet{ width:22px; flex:0 0 22px; }
+
+@media (max-width:960px){
+  .toolbar.toolbar-collapsed > :not(:first-child){ display:none; }
+  .toolbar.toolbar-collapsed .search-input{ flex:1 1 auto; }
+}
+
+.tutorial-import-detail{
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(83,255,233,.34);
+  background: rgba(10,22,52,.65);
+}
+.tutorial-import-detail ul{ margin:8px 0 12px 18px; color:#c9dcff; }
+.tutorial-import-detail li{ margin:4px 0; }
+
+.tutorial-target-pulse{
+  box-shadow: 0 0 0 2px rgba(83,255,233,.35), 0 0 18px rgba(83,255,233,.55) !important;
+  animation: tutorialPulse 1s ease-in-out infinite alternate;
+}
+@keyframes tutorialPulse{
+  from { transform: translateY(0); }
+  to { transform: translateY(-1px); }
+}
+
+.guided-coach{
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1200;
+  max-width: min(420px, 92vw);
+  border-radius: 14px;
+  border: 1px solid rgba(83,255,233,.30);
+  background: rgba(8,15,36,.94);
+  padding: 12px;
+  box-shadow: 0 8px 26px rgba(0,0,0,.35);
+}
+.guided-coach-title{ font-weight:800; margin-bottom:6px; }
+.guided-coach p{ margin:6px 0 8px; }
+.guided-coach ul{ margin:6px 0 10px 18px; }
+.guided-coach .btn{ margin-right:6px; }

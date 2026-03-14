@@ -35,6 +35,13 @@ const APP_VERSION =
   process.env.REACT_APP_VERSION ||
   localStorage.getItem("do-kkae-bi-app-version") ||
   "dev";
+const APP_BUILD_INFO =
+  process.env.REACT_APP_BUILD_INFO ||
+  process.env.REACT_APP_GIT_COMMIT ||
+  localStorage.getItem("do-kkae-bi-build-info") ||
+  "local";
+const ADMIN_PASSWORD = "2513";
+
 
 /* =========================
    1) 카테고리/스키마 정의
@@ -333,7 +340,15 @@ function Home({
   // [P1-B] 백업 메타 상태
   const [backupMeta, setBackupMeta] = useState(() => hasBackup());
   const backupRefresh = React.useCallback(() => setBackupMeta(hasBackup()), []);
-
+  const [highlightKey, setHighlightKey] = useState("");
+  const [searchVisibleCount, setSearchVisibleCount] = useState(20);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [guidedTutorialOpen, setGuidedTutorialOpen] = useState(false);
+  const [guidedStep, setGuidedStep] = useState(0);
+  const tutorialSeenKey = "do-kkae-bi-tutorial-seen-v1.6.0";
+  const dataMenuButtonRef = useRef(null);
+  const importMenuItemRef = useRef(null);
 
 
   // 시트 → JSON 로우 파싱(헤더 유연 + 'nan' 등 빈값 처리)
@@ -437,6 +452,13 @@ function Home({
   function handleImportClick(e) {
     e.preventDefault();
     e.stopPropagation();
+
+    if (guidedTutorialOpen && guidedStep === 1) {
+      toast.success("[체험] 일괄 추가 버튼 위치와 진입 흐름을 확인했어요.");
+      nextGuidedStep();
+      return;
+    }
+
     const ok = window.confirm(
       "⚠️ 일괄 추가\n\n- 로그를 남기지 않고 재고만 변경합니다.\n- 실행 전 '재고 Excel 내보내기'로 백업을 권장합니다.\n\n계속할까요?"
     );
@@ -451,6 +473,25 @@ function Home({
       importInputRef.current.value = null;
       importInputRef.current.click();
     }
+  }
+
+  function beginGuidedTutorial() {
+    setTutorialOpen(false);
+    setGuidedTutorialOpen(true);
+    setGuidedStep(0);
+    setDataMenuOpen(false);
+  }
+
+  function nextGuidedStep() {
+    setGuidedStep((cur) => {
+      if (cur >= 2) {
+        setGuidedTutorialOpen(false);
+        setDataMenuOpen(false);
+        toast.success("가이드 체험 완료! 실제 업로드는 CSV/XLSX를 선택해 진행하세요.");
+        return cur;
+      }
+      return cur + 1;
+    });
   }
 
   // 파일 업로드 후 병합
@@ -555,7 +596,21 @@ function Home({
     const t = setInterval(backupRefresh, 60 * 1000);
     return () => clearInterval(t);
   }, [backupRefresh]);
+  useEffect(() => {
+    setSearchVisibleCount(20);
+  }, [searchTerm]);
 
+  useEffect(() => {
+    try {
+      const seen = localStorage.getItem(tutorialSeenKey) === "true";
+      if (!seen) setTutorialOpen(true);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!tutorialOpen) return;
+    try { localStorage.setItem(tutorialSeenKey, "true"); } catch {}
+  }, [tutorialOpen]);
 
   // 동기화 인디케이터
   useEffect(() => {
@@ -1025,8 +1080,11 @@ function Home({
       map[k].locs[e.loc] = (map[k].locs[e.loc] || 0) + (e.count || 0);
       map[k].total += e.count || 0;
     });
-    return Object.values(map);
+    return Object.values(map).sort((a, b) => b.total - a.total || String(a.name).localeCompare(String(b.name)));
   }, [filtered]);
+  const visibleSearchResults = useMemo(() => aggregated.slice(0, searchVisibleCount), [aggregated, searchVisibleCount]);
+  const hasMoreSearchResults = aggregated.length > visibleSearchResults.length;
+
 
   function scrollToCategory(loc, cat, sub, itemName, sub2 = null) {
     Object.keys(categoryRefs.current).forEach((k) => {
@@ -1045,7 +1103,11 @@ function Home({
     setTimeout(() => {
       const ik = `${loc}-${cat}-${sub}${sub2 ? "-" + sub2 : ""}-${itemName}`;
       const el = categoryRefs.current[ik];
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightKey(ik);
+        window.setTimeout(() => setHighlightKey((prev) => (prev === ik ? "" : prev)), 1600);
+      }
     }, 80);
   }
 
@@ -1066,7 +1128,7 @@ function Home({
     return (
       <li
         key={`${it.name}-${idx}`}
-        className={`item-row ${open ? "is-editing" : ""}`}
+        className={`item-row ${open ? "is-editing" : ""} ${highlightKey === refKey ? "item-row-highlight" : ""}`}
         ref={(el) => {
           if (el) categoryRefs.current[refKey] = el;
         }}
@@ -1364,8 +1426,12 @@ function Home({
 
           <div className="menu-wrap" ref={dataMenuRef}>
             <button
-              className="btn btn-secondary"
-              onClick={() => setDataMenuOpen((v) => !v)}
+              ref={dataMenuButtonRef}
+              className={`btn btn-secondary ${guidedTutorialOpen && guidedStep === 0 ? "tutorial-target-pulse" : ""}`}
+              onClick={() => {
+                setDataMenuOpen((v) => !v);
+                if (guidedTutorialOpen && guidedStep === 0) nextGuidedStep();
+              }}
               aria-haspopup="menu"
               aria-expanded={dataMenuOpen}
             >
@@ -1386,7 +1452,8 @@ function Home({
 
                 {isAdmin ? (
                   <button
-                    className="menu-item"
+                    ref={importMenuItemRef}
+                    className={`menu-item ${guidedTutorialOpen && guidedStep === 1 ? "tutorial-target-pulse" : ""}`}
                     onClick={handleImportClick}
                     title="CSV/XLSX에서 재고를 일괄 추가합니다(로그 미생성)"
                   >
@@ -1425,6 +1492,9 @@ function Home({
           <button className="btn btn-secondary" onClick={() => navigate("/logs")}>
             📘 기록
           </button>
+          <button className="btn btn-ghost" onClick={() => { setTutorialOpen(true); setTutorialStep(0); }}>
+            🧭 가이드
+          </button>
 
           {(isAdmin || (userId && userName)) && (
             <button className="btn btn-ghost" onClick={() => hardLogout()}>
@@ -1449,7 +1519,7 @@ function Home({
           ) : (
             <>
               <ul className="result-list">
-                {aggregated.map((e, i) => (
+                {visibleSearchResults.map((e, i) => (
                   <li key={i} className="result-item">
                     <div
                       className="result-name link"
@@ -1473,7 +1543,12 @@ function Home({
                   </li>
                 ))}
               </ul>
-              <div className="right">
+              <div className="right result-actions">
+                {hasMoreSearchResults && (
+                  <button className="btn btn-secondary" onClick={() => setSearchVisibleCount((n) => n + 20)}>
+                    +더보기 ({visibleSearchResults.length}/{aggregated.length})
+                  </button>
+                )}
                 <button
                   className="btn btn-secondary"
                   onClick={() => {
@@ -1576,11 +1651,79 @@ function Home({
         </div>
       )}
 
+      {tutorialOpen && (
+        <div className="overlay" onClick={() => setTutorialOpen(false)}>
+          <div className="popup glass neon-rise tutorial-popup" onClick={(e) => e.stopPropagation()}>
+            <div className="popup-head">
+              <h3 className="popup-title">처음 사용하는 분들을 위한 빠른 가이드</h3>
+              <button className="btn btn-ghost" onClick={() => setTutorialOpen(false)}>닫기</button>
+            </div>
+            <div className="popup-body">
+              {[
+                { title: "1) 데이터 메뉴", text: "재고 내보내기, 일괄 추가, 30분 백업 되돌리기를 여기서 수행합니다." },
+                { title: "2) 검색과 이동", text: "검색 결과를 누르면 해당 위치로 스크롤 이동하고 항목을 강조 표시합니다." },
+                { title: "3) 관리자/일반 사용자", text: "관리자만 수량 수정/추가/삭제가 가능하며, 일반 사용자는 조회와 기록 확인 중심으로 사용합니다." },
+                { title: "4) 모바일 사용 팁", text: "로그 화면은 스크롤 시 필터가 접혀 목록 확인이 쉬워지고, 더보기로 대량 데이터도 안정적으로 볼 수 있습니다." },
+              ].map((step, idx) => (
+                <button
+                  key={step.title}
+                  type="button"
+                  className={`tutorial-step ${tutorialStep === idx ? "is-active" : ""}`}
+                  onClick={() => setTutorialStep(idx)}
+                >
+                  <span className="tutorial-bullet">{tutorialStep > idx ? "✅" : tutorialStep === idx ? "👉" : "◯"}</span>
+                  <span>
+                    <strong>{step.title}</strong>
+                    <small>{step.text}</small>
+                  </span>
+                </button>
+              ))}
+
+              <div className="tutorial-import-detail">
+                <strong>📥 일괄 추가 상세 가이드</strong>
+                <ul>
+                  <li>업로드 직전에 현재 재고가 로컬에 자동 백업되며 30분 내 복구할 수 있습니다.</li>
+                  <li>"아니오" 선택 시 기존 수량에 합산, "예" 선택 시 전체 초기화 후 파일 기준 반영됩니다.</li>
+                  <li>동일 파일을 다시 올리면 합산 모드에서 수량이 다시 증가합니다.</li>
+                  <li>일괄 추가는 재고만 변경하며 로그 페이지에는 기록을 남기지 않습니다.</li>
+                </ul>
+                <button className="btn btn-secondary" type="button" onClick={beginGuidedTutorial}>
+                  🎮 기능 버튼 직접 체험 시작
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {guidedTutorialOpen && (
+        <div className="guided-coach" role="status" aria-live="polite">
+          <div className="guided-coach-title">🎯 실전 체험 가이드 {guidedStep + 1}/3</div>
+          {guidedStep === 0 && <p>1) 상단의 <strong>📦 데이터</strong> 버튼을 직접 눌러 메뉴를 열어보세요.</p>}
+          {guidedStep === 1 && <p>2) 열린 메뉴에서 <strong>📥 일괄 추가</strong>를 눌러 진입 흐름을 체험하세요. (체험 모드라 실제 업로드는 진행되지 않습니다)</p>}
+          {guidedStep === 2 && (
+            <div>
+              <p><strong>3) 업로드 체크포인트</strong></p>
+              <ul>
+                <li>실행 직전 30분 백업 생성</li>
+                <li>합산/초기화 모드 선택 확인</li>
+                <li>중복 업로드 시 재증가 주의</li>
+              </ul>
+              <button className="btn btn-primary" onClick={nextGuidedStep}>체험 완료</button>
+            </div>
+          )}
+          {guidedStep < 2 && <button className="btn btn-ghost" onClick={() => setGuidedTutorialOpen(false)}>나중에</button>}
+        </div>
+      )}
+
+
       <footer className="site-footer">
         <p>
           © 강원도립대 드론융합과 24학번 최석민 - 드론축구단 재고·입출고 관리 콘솔
           <br />
           문의: <a href="mailto:gwdokkebinv@gmail.com">gwdokkebinv@gmail.com</a>
+          <br />
+          <span className="muted small">빌드 정보: {APP_BUILD_INFO}</span>
         </p>
       </footer>
     </main>
@@ -1594,10 +1737,14 @@ function LogsPage({ logs, setLogs }) {
   const [syncing, setSyncing] = useState(false);
   const navigate = useNavigate();
   const [filterDate, setFilterDate] = useState("");
+  const [dateFocused, setDateFocused] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [itemKeyword, setItemKeyword] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
+  const [visibleLogsCount, setVisibleLogsCount] = useState(500);
+  const [mobileFilterCollapsed, setMobileFilterCollapsed] = useState(false);
   const menuRef = useRef(null);
+  const listScrollRef = useRef(null);
 
   useEffect(() => saveLocalLogs(logs), [logs]);
 
@@ -1619,17 +1766,37 @@ function LogsPage({ logs, setLogs }) {
     }
     return list;
   }, [sorted, filterDate, locationFilter, itemKeyword]);
+  const visibleLogs = useMemo(() => filteredList.slice(0, visibleLogsCount), [filteredList, visibleLogsCount]);
 
   const grouped = useMemo(
     () =>
-      filteredList.reduce((acc, l) => {
+      visibleLogs.reduce((acc, l) => {
         const day = l.ts.slice(0, 10);
         (acc[day] = acc[day] || []).push(l);
         return acc;
       }, {}),
-    [filteredList]
+    [visibleLogs]
   );
   const dates = useMemo(() => Object.keys(grouped).sort((a, b) => new Date(b) - new Date(a)), [grouped]);
+
+  useEffect(() => {
+    setVisibleLogsCount(500);
+  }, [filterDate, itemKeyword, locationFilter, logs]);
+
+  useEffect(() => {
+    const isMobile = window.matchMedia("(max-width: 960px)").matches;
+    if (!isMobile) return;
+    const node = listScrollRef.current || window;
+    let lastTop = 0;
+    const onScroll = () => {
+      const top = node === window ? (window.scrollY || 0) : (node.scrollTop || 0);
+      if (top > lastTop + 8) setMobileFilterCollapsed(true);
+      if (top < lastTop - 8 || top < 16) setMobileFilterCollapsed(false);
+      lastTop = top;
+    };
+    node.addEventListener("scroll", onScroll, { passive: true });
+    return () => node.removeEventListener("scroll", onScroll);
+  }, [dates.length]);
 
   function formatLabel(d) {
     const diff = Math.floor((new Date() - new Date(d)) / (1000 * 60 * 60 * 24));
@@ -1716,7 +1883,7 @@ function LogsPage({ logs, setLogs }) {
         </button>
         <h1 className="logo">📘입출고 기록</h1>
 
-        <div className="toolbar">
+        <div className={`toolbar ${mobileFilterCollapsed ? "toolbar-collapsed" : ""}`}>
           <input
             className="search-input"
             type="text"
@@ -1738,9 +1905,13 @@ function LogsPage({ logs, setLogs }) {
             ))}
           </select>
           <input
-            type="date"
+            type={dateFocused || filterDate ? "date" : "text"}
             value={filterDate}
+            onFocus={() => setDateFocused(true)}
+            onBlur={() => setDateFocused(false)}
             onChange={(e) => setFilterDate(e.target.value)}
+            placeholder="날짜 필터"
+            inputMode="none"
             className="search-input"
           />
 
@@ -1801,41 +1972,50 @@ function LogsPage({ logs, setLogs }) {
           <p className="muted">기록이 없습니다.</p>
         </section>
       ) : (
-        dates.map((d) => (
-          <section key={d} className="panel glass lift-in">
-            <h2 className="panel-title">{formatLabel(d)}</h2>
-            <ul className="log-list">
-              {grouped[d].map((l, i) => {
-                const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
-                return (
-                  <li key={`${l.id || "local"}-${i}`} className="log-row">
-                    <div className="log-text">
-                      <div className="log-line">
-                        <span className="time">[{l.time}]</span> {l.location} &gt; {l.category} &gt; {l.subcategory} /{" "}
-                        <strong>{l.item}</strong>
+        <>
+          {dates.map((d) => (
+            <section key={d} className="panel glass lift-in">
+              <h2 className="panel-title">{formatLabel(d)}</h2>
+              <ul className="log-list" ref={listScrollRef}>
+                {grouped[d].map((l, i) => {
+                  const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
+                  return (
+                    <li key={`${l.id || "local"}-${i}`} className="log-row">
+                      <div className="log-text">
+                        <div className="log-line">
+                          <span className="time">[{l.time}]</span> {l.location} &gt; {l.category} &gt; {l.subcategory} /{" "}
+                          <strong>{l.item}</strong>
+                        </div>
+                        <div className={l.change > 0 ? "mark in" : "mark out"}>
+                          {l.change > 0 ? `입고 +${l.change}` : `출고 -${-l.change}`}
+                        </div>
+                        <div className="muted small">
+                          👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}
+                        </div>
+                        {l.reason && <div className="log-note">메모: {l.reason}</div>}
                       </div>
-                      <div className={l.change > 0 ? "mark in" : "mark out"}>
-                        {l.change > 0 ? `입고 +${l.change}` : `출고 -${-l.change}`}
+                      <div className="log-actions">
+                        <button className="btn btn-ghost" onClick={() => editReason(idx)}>
+                          {l.reason ? "메모 수정" : "메모 추가"}
+                        </button>
+                        <button className="btn btn-danger" onClick={() => deleteLog(idx)}>
+                          삭제
+                        </button>
                       </div>
-                      <div className="muted small">
-                        👤 {l.operatorId ? `[${l.operatorId}]` : ""} {l.operatorName || ""}
-                      </div>
-                      {l.reason && <div className="log-note">메모: {l.reason}</div>}
-                    </div>
-                    <div className="log-actions">
-                      <button className="btn btn-ghost" onClick={() => editReason(idx)}>
-                        {l.reason ? "메모 수정" : "메모 추가"}
-                      </button>
-                      <button className="btn btn-danger" onClick={() => deleteLog(idx)}>
-                        삭제
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ))
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+          {filteredList.length > visibleLogs.length && (
+            <section className="panel glass lift-in right">
+              <button className="btn btn-secondary" onClick={() => setVisibleLogsCount((n) => n + 500)}>
+                +더보기 ({visibleLogs.length}/{filteredList.length})
+              </button>
+            </section>
+          )}
+        </>
       )}
     </main>
   );
@@ -2147,7 +2327,7 @@ export default function AppWrapper() {
               ) : (
                 <LoginPage
                   onLogin={({ pw, uid, name }) => {
-                    if (pw === "2500" && uid && name) {
+                    if (pw === ADMIN_PASSWORD && String(uid || "").trim().length === 9 && name) {
                       // 저장소 갱신
                       saveLocalAdmin(true);
                       sessionStorage.setItem("do-kkae-bi-admin", "true");
