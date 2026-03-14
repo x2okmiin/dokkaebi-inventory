@@ -41,6 +41,36 @@ const APP_BUILD_INFO =
   localStorage.getItem("do-kkae-bi-build-info") ||
   "local";
 const ADMIN_PASSWORD = "2513";
+const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.1";
+
+function getOnboardingState() {
+  try {
+    const raw = localStorage.getItem(GUIDE_STORAGE_KEY);
+    if (!raw) return { seen: false, status: "new", ts: null };
+    const parsed = JSON.parse(raw);
+    return {
+      seen: !!parsed?.seen,
+      status: parsed?.status || "completed",
+      ts: parsed?.ts || null,
+    };
+  } catch {
+    return { seen: false, status: "new", ts: null };
+  }
+}
+
+function markOnboardingSeen(status = "completed") {
+  try {
+    localStorage.setItem(
+      GUIDE_STORAGE_KEY,
+      JSON.stringify({
+        seen: true,
+        status,
+        ts: new Date().toISOString(),
+        version: "1.6.0-beta.1",
+      })
+    );
+  } catch {}
+}
 
 
 /* =========================
@@ -347,7 +377,7 @@ function Home({
   const [tutorialStep, setTutorialStep] = useState(0);
   const [guidedTutorialOpen, setGuidedTutorialOpen] = useState(false);
   const [guidedStep, setGuidedStep] = useState(0);
-  const tutorialSeenKey = "do-kkae-bi-tutorial-seen-v1.5.9-beta.5";
+  const [onboardingMeta, setOnboardingMeta] = useState(() => getOnboardingState());
   const dataMenuButtonRef = useRef(null);
   const importMenuItemRef = useRef(null);
 
@@ -482,13 +512,24 @@ function Home({
     setGuidedStep(0);
     setDataMenuOpen(false);
   }
+  function skipUnifiedGuide() {
+    markOnboardingSeen("skipped");
+    setOnboardingMeta(getOnboardingState());
+    setTutorialOpen(false);
+    setGuidedTutorialOpen(false);
+    setDataMenuOpen(false);
+    toast("가이드는 건너뛰었어요. 상단 '🧭 가이드' 버튼에서 언제든 다시 볼 수 있습니다.");
+  }
+
 
   function nextGuidedStep() {
     setGuidedStep((cur) => {
       if (cur >= 2) {
         setGuidedTutorialOpen(false);
         setDataMenuOpen(false);
-        toast.success("가이드 체험 완료! 실제 업로드는 CSV/XLSX를 선택해 진행하세요.");
+        markOnboardingSeen("completed");
+        setOnboardingMeta(getOnboardingState());
+        toast.success("통합 가이드 완료! 실제 업로드는 CSV/XLSX를 선택해 진행하세요.");
         return cur;
       }
       return cur + 1;
@@ -602,16 +643,13 @@ function Home({
   }, [searchTerm]);
 
   useEffect(() => {
-    try {
-      const seen = localStorage.getItem(tutorialSeenKey) === "true";
-      if (!seen) setTutorialOpen(true);
-    } catch {}
+    const state = getOnboardingState();
+    setOnboardingMeta(state);
+    if (!state.seen) {
+      setTutorialOpen(true);
+      setTutorialStep(0);
+    }
   }, []);
-
-  useEffect(() => {
-    if (!tutorialOpen) return;
-    try { localStorage.setItem(tutorialSeenKey, "true"); } catch {}
-  }, [tutorialOpen]);
 
   // 동기화 인디케이터
   useEffect(() => {
@@ -1494,7 +1532,7 @@ function Home({
             📘 기록
           </button>
           <button className="btn btn-ghost" onClick={() => { setTutorialOpen(true); setTutorialStep(0); }}>
-            🧭 가이드
+            🧭 가이드 {onboardingMeta.seen ? (onboardingMeta.status === "completed" ? "(완료)" : "(스킵됨)") : "(필수 1회)"}
           </button>
 
           {(isAdmin || (userId && userName)) && (
@@ -1656,15 +1694,16 @@ function Home({
         <div className="overlay" onClick={() => setTutorialOpen(false)}>
           <div className="popup glass neon-rise tutorial-popup" onClick={(e) => e.stopPropagation()}>
             <div className="popup-head">
-              <h3 className="popup-title">처음 사용하는 분들을 위한 빠른 가이드</h3>
+              <h3 className="popup-title">v1.6.0-beta 통합 온보딩 가이드</h3>
               <button className="btn btn-ghost" onClick={() => setTutorialOpen(false)}>닫기</button>
             </div>
             <div className="popup-body">
               {[
-                { title: "1) 데이터 메뉴", text: "재고 내보내기, 일괄 추가, 30분 백업 되돌리기를 여기서 수행합니다." },
-                { title: "2) 검색과 이동", text: "검색 결과를 누르면 해당 위치로 스크롤 이동하고 항목을 강조 표시합니다." },
-                { title: "3) 관리자/일반 사용자", text: "관리자만 수량 수정/추가/삭제가 가능하며, 일반 사용자는 조회와 기록 확인 중심으로 사용합니다." },
-                { title: "4) 모바일 사용 팁", text: "로그 화면은 스크롤 시 필터가 접혀 목록 확인이 쉬워지고, 더보기로 대량 데이터도 안정적으로 볼 수 있습니다." },
+                { title: "1) 재고 관리 구조", text: "장소 > 카테고리 > 하위 > (필요 시 최하위) > 품목 순서로 관리합니다. 상세 팝업을 열면 details를 모두 자동으로 펼쳐 빠르게 점검할 수 있습니다." },
+                { title: "2) 로그 페이지 핵심", text: "/#/logs 에서 날짜/장소/품목 필터, CSV/Excel 내보내기, 1시간 이내 동일 키 자동 병합을 확인합니다." },
+                { title: "3) 검색과 이동", text: "검색 결과 클릭 시 해당 카드로 이동하고 필요한 details를 자동 오픈합니다." },
+                { title: "4) 권한/자동 로그아웃", text: "관리자만 추가/수정/삭제 버튼을 사용합니다. 10분 무활동이면 자동 로그아웃됩니다." },
+                { title: "5) 일괄 추가와 백업", text: "업로드 전 자동 백업(30분)이 생성되며, 합산/초기화 모드를 선택할 수 있습니다. 업로드는 로그를 만들지 않습니다." },
               ].map((step, idx) => (
                 <button
                   key={step.title}
@@ -1681,16 +1720,20 @@ function Home({
               ))}
 
               <div className="tutorial-import-detail">
-                <strong>📥 일괄 추가 상세 가이드</strong>
+                <strong>운영 체크포인트</strong>
                 <ul>
-                  <li>업로드 직전에 현재 재고가 로컬에 자동 백업되며 30분 내 복구할 수 있습니다.</li>
-                  <li>"아니오" 선택 시 기존 수량에 합산, "예" 선택 시 전체 초기화 후 파일 기준 반영됩니다.</li>
-                  <li>동일 파일을 다시 올리면 합산 모드에서 수량이 다시 증가합니다.</li>
-                  <li>일괄 추가는 재고만 변경하며 로그 페이지에는 기록을 남기지 않습니다.</li>
+                  <li>재고 Excel 내보내기 시 0 수량은 "nan"으로 기록되고, 시트2는 품목별 합계를 숫자로 제공합니다.</li>
+                  <li>일괄 추가 파일은 .xlsx/.csv(첫 시트)만 지원합니다.</li>
+                  <li>같은 파일 재업로드 시 수량이 다시 증가할 수 있어 업로드 이력 확인이 필요합니다.</li>
                 </ul>
-                <button className="btn btn-secondary" type="button" onClick={beginGuidedTutorial}>
-                  🎮 기능 버튼 직접 체험 시작
-                </button>
+                <div className="tutorial-actions">
+                  <button className="btn btn-secondary" type="button" onClick={beginGuidedTutorial}>
+                    🎮 기능 버튼 직접 체험 시작
+                  </button>
+                  <button className="btn btn-ghost" type="button" onClick={skipUnifiedGuide}>
+                    이번만 스킵
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2042,25 +2085,37 @@ export default function AppWrapper() {
   const fireReadyOnce = () => {
     if (bootRef.current.fired) return;
     bootRef.current.fired = true;
-    try { 
-      // 부팅 직후에는 스플래시 닫지 않음 (실제 동기화/폴백에서만 닫기)
-      // window.dispatchEvent(new Event("dokkebi-ready")); 
-      
+    try {
+      window.dispatchEvent(new Event("dokkebi-ready"));
     } catch {}
   };
+
+  // [v1.6.0-beta] 부트 동기화 완료를 단일 함수로 처리해 스플래시/부트 로딩 충돌을 방지합니다.
+  const markBootSyncDone = React.useCallback((reason = "ready") => {
+    setBootSynced((prev) => {
+      if (prev) return prev;
+      try {
+        localStorage.setItem("do-kkae-bi-has-synced", "true");
+        localStorage.setItem("do-kkae-bi-last-sync-ts", String(Date.now()));
+      } catch {}
+      if (process.env.NODE_ENV !== "production") {
+        console.info(`[boot] sync completed (${reason})`);
+      }
+      fireReadyOnce();
+      return true;
+    });
+  }, []);
 
   // 3) 지연 폴백 (12초): 새 기기 + 아직 부트 미완료면 임시 통과
   useEffect(() => {
     if (!isFreshDevice || bootSynced) return;
     const t = setTimeout(() => {
       setFallbackFired(true);
-      setBootSynced(true);                 // 화면은 열어줌 (임시 통과)
-      try { localStorage.setItem("do-kkae-bi-has-synced", "true"); } catch {}
-      fireReadyOnce();                     // 스플래시 닫기
+      markBootSyncDone("fallback");      // 화면은 열어주되, 부트 완료 경로를 단일화
       // 실제 두 스냅샷이 나중에라도 들어오면 onValue 쪽에서 정상 완료 처리됨
     }, BOOT_FALLBACK_FLAG_MS);
     return () => clearTimeout(t);
-  }, [isFreshDevice, bootSynced]);
+  }, [isFreshDevice, bootSynced, markBootSyncDone]);
 
   // 4) 부트 완료 후 fresh 플래그 해제
   useEffect(() => {
@@ -2093,7 +2148,7 @@ export default function AppWrapper() {
   // ✅ 스플래시 폴백 타이머 ref
   const splashTimeoutRef = useRef(null);
 
-  // 앱 부팅: 버전 라벨 갱신 + 스플래시 닫기 트리거 이벤트
+  // 앱 부팅: 버전 라벨 갱신(스플래시 닫기는 부트 완료 시점으로 일원화)
   useEffect(() => {
     try {
       const envV = process.env.REACT_APP_VERSION || "dev";
@@ -2110,7 +2165,6 @@ export default function AppWrapper() {
       if (older) localStorage.setItem("do-kkae-bi-app-version", envV);
       window.dispatchEvent(new CustomEvent("dokkaebi-version", { detail: envV }));
     } catch {}
-    window.dispatchEvent(new Event("dokkebi-ready"));
   }, []);
 
   // 마운트 시 세션 타임아웃 검증(10분)
@@ -2138,12 +2192,7 @@ export default function AppWrapper() {
         bootRef.current.inv = true;     // 첫 인벤토리 스냅샷 도착
        // ✅ 부트 완료 체크: 인벤토리+로그 모두 수신되면 부트 완료
        if (bootRef.current.logs && !bootSynced) {
-         setBootSynced(true);
-            try {
-              localStorage.setItem("do-kkae-bi-has-synced", "true");
-              localStorage.setItem("do-kkae-bi-last-sync-ts", String(Date.now()));
-            } catch {}
-         fireReadyOnce();
+         markBootSyncDone("inventory+logs");
        }
       }
     });
@@ -2159,12 +2208,7 @@ export default function AppWrapper() {
         bootRef.current.logs = true;    // 첫 로그 스냅샷 도착
        // ✅ 부트 완료 체크: 인벤토리+로그 모두 수신되면 부트 완료
        if (bootRef.current.inv && !bootSynced) {
-         setBootSynced(true);
-          try {
-            localStorage.setItem("do-kkae-bi-has-synced", "true");
-            localStorage.setItem("do-kkae-bi-last-sync-ts", String(Date.now()));
-          } catch {}
-         fireReadyOnce();
+         markBootSyncDone("logs+inventory");
        }
       }
     });
@@ -2173,12 +2217,12 @@ export default function AppWrapper() {
       unsubInv();
       unsubLogs();
     };
-  }, [bootSynced]);
+  }, [bootSynced, markBootSyncDone]);
 
   // RTDB 지연 대비 (8초) 스플래시 강제 닫기
   useEffect(() => {
    splashTimeoutRef.current = setTimeout(() => {
-     fireReadyOnce();   // 8초 동안 ready가 안 오면 강제 닫기
+     markBootSyncDone("force-hide");
     }, BOOT_FORCE_HIDE_MS);
      return () => {
        if (splashTimeoutRef.current) {
@@ -2186,7 +2230,7 @@ export default function AppWrapper() {
          splashTimeoutRef.current = null;
        }
      };
-   }, []);
+   }, [markBootSyncDone]);
 
   // 스플래시: ready 이벤트 수신 시 닫기 (+ 폴백 타이머 취소)
   useEffect(() => {

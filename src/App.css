@@ -897,40 +897,11 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
   opacity: .75;
 }
 
-#app-splash {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: block;              /* 기본은 보이게 */
-  background: radial-gradient(1200px 800px at 50% 20%, rgba(83,255,233,0.10), rgba(0,0,0,0.85)),
-              #05070e;
-  color: #e6f7ff;
-  opacity: 1;
-  transition: opacity .35s ease, transform .35s ease;
-  will-change: opacity, transform;
-}
-#app-splash .splash-inner {
-  position: absolute; inset: 0;
-  display: grid; place-items: center;
-  gap: 16px;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
-  text-align: center;
-}
-#app-splash .splash-logo { font-size: clamp(22px, 5vw, 36px); font-weight: 800; letter-spacing: .06em; }
-#app-splash .splash-sub  { opacity: .85; font-size: 14px; }
-#app-splash .splash-meta { opacity: .6;  font-size: 12px; }
-
-/* 닫힐 때만 사라짐 */
-#app-splash.hide {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-6px);
-}
-
-/* 접근성: 모션 선호 안함일 때 전환 최소화 */
-@media (prefers-reduced-motion: reduce) {
-  #app-splash { transition: opacity .01s linear; }
-}
+/*
+  주의: 스플래시의 레이아웃/중앙정렬은 public/index.html 인라인 스타일이 단일 소스입니다.
+  여기서는 보조 문구(.splash-sub/.splash-meta)만 꾸밉니다.
+  예전 구형 스플래시 스타일(#app-splash display:block 등)은 제거해 초기 로딩 겹침 문제를 방지합니다.
+*/
 
 .item-row-highlight{
   animation: item-highlight 1.6s ease;
@@ -967,6 +938,7 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
 }
 .tutorial-import-detail ul{ margin:8px 0 12px 18px; color:#c9dcff; }
 .tutorial-import-detail li{ margin:4px 0; }
+.tutorial-actions{ display:flex; gap:8px; flex-wrap:wrap; }
 
 .tutorial-target-pulse{
   box-shadow: 0 0 0 2px rgba(83,255,233,.35), 0 0 18px rgba(83,255,233,.55) !important;
