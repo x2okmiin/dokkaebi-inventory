@@ -41,7 +41,7 @@ const APP_BUILD_INFO =
   localStorage.getItem("do-kkae-bi-build-info") ||
   "local";
 const ADMIN_PASSWORD = "2513";
-const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.1";
+const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.2";
 
 function getOnboardingState() {
   try {
@@ -51,6 +51,7 @@ function getOnboardingState() {
     return {
       seen: !!parsed?.seen,
       status: parsed?.status || "completed",
+      reopenedAt: parsed?.reopenedAt || null,
       ts: parsed?.ts || null,
     };
   } catch {
@@ -67,6 +68,23 @@ function markOnboardingSeen(status = "completed") {
         status,
         ts: new Date().toISOString(),
         version: "1.6.0-beta.1",
+        version: "1.6.0-beta.2",
+      })
+    );
+  } catch {}
+}
+
+function markOnboardingReopened() {
+  try {
+    const prev = getOnboardingState();
+    localStorage.setItem(
+      GUIDE_STORAGE_KEY,
+      JSON.stringify({
+        ...prev,
+        seen: true,
+        status: prev.status || "completed",
+        reopenedAt: new Date().toISOString(),
+        version: "1.6.0-beta.2",
       })
     );
   } catch {}
@@ -380,6 +398,18 @@ function Home({
   const [onboardingMeta, setOnboardingMeta] = useState(() => getOnboardingState());
   const dataMenuButtonRef = useRef(null);
   const importMenuItemRef = useRef(null);
+  const logsNavButtonRef = useRef(null);
+  const searchInputRef = useRef(null);
+
+  // 온보딩 단계별 자동 이동 타겟(메인/로그/데이터 메뉴)
+  const GUIDE_STEPS = useMemo(() => [
+    { title: "1) 재고 관리 구조", desc: "장소 카드와 하위 카테고리 확장 흐름을 직접 확인합니다.", actionLabel: "장소 카드로 이동", action: () => cardRefs.current[locations[0]]?.scrollIntoView({ behavior: "smooth", block: "start" }) },
+    { title: "2) 로그 페이지 핵심", desc: "기록 페이지로 이동해 필터/내보내기 핵심 UI를 직접 확인합니다.", actionLabel: "기록 페이지로 이동", action: () => navigate("/logs") },
+    { title: "3) 검색과 이동", desc: "상단 검색창 위치로 자동 이동해 검색-이동 흐름을 체험합니다.", actionLabel: "검색창으로 이동", action: () => searchInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }) },
+    { title: "4) 권한 / 자동 로그아웃", desc: "관리자 버튼 노출 조건과 10분 무활동 자동 로그아웃 정책을 확인합니다.", actionLabel: "권한 영역 보기", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
+    { title: "5) 일괄 추가와 백업", desc: "데이터 메뉴를 열고 일괄 추가/백업 복구 위치를 순서대로 확인합니다.", actionLabel: "데이터 메뉴 열기", action: () => { dataMenuButtonRef.current?.click(); dataMenuButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); } },
+    { title: "6) 마지막 운영 체크포인트", desc: "운영 중 회귀 점검 항목을 확인하고 온보딩을 완료합니다.", actionLabel: "운영 체크포인트 확인", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
+  ], [navigate]);
 
 
   // 시트 → JSON 로우 파싱(헤더 유연 + 'nan' 등 빈값 처리)
@@ -511,7 +541,15 @@ function Home({
     setGuidedTutorialOpen(true);
     setGuidedStep(0);
     setDataMenuOpen(false);
+    setTimeout(() => GUIDE_STEPS[0]?.action?.(), 120);
   }
+
+  function runGuideAction(step = guidedStep) {
+    const target = GUIDE_STEPS[step];
+    if (!target?.action) return;
+    target.action();
+  }
+
   function skipUnifiedGuide() {
     markOnboardingSeen("skipped");
     setOnboardingMeta(getOnboardingState());
@@ -521,18 +559,19 @@ function Home({
     toast("가이드는 건너뛰었어요. 상단 '🧭 가이드' 버튼에서 언제든 다시 볼 수 있습니다.");
   }
 
-
   function nextGuidedStep() {
     setGuidedStep((cur) => {
-      if (cur >= 2) {
+      if (cur >= GUIDE_STEPS.length - 1) {
         setGuidedTutorialOpen(false);
         setDataMenuOpen(false);
         markOnboardingSeen("completed");
         setOnboardingMeta(getOnboardingState());
-        toast.success("통합 가이드 완료! 실제 업로드는 CSV/XLSX를 선택해 진행하세요.");
+        toast.success("체험형 온보딩 완료! 이제 운영 흐름대로 바로 사용할 수 있어요.");
         return cur;
       }
-      return cur + 1;
+      const next = cur + 1;
+      setTimeout(() => runGuideAction(next), 140);
+      return next;
     });
   }
 
@@ -650,6 +689,12 @@ function Home({
       setTutorialStep(0);
     }
   }, []);
+
+  useEffect(() => {
+    if (!guidedTutorialOpen) return;
+    const target = GUIDE_STEPS[guidedStep];
+    if (target?.action) target.action();
+  }, [guidedTutorialOpen, guidedStep, GUIDE_STEPS]);
 
   // 동기화 인디케이터
   useEffect(() => {
@@ -1455,6 +1500,7 @@ function Home({
 
         <div className="toolbar">
           <input
+            ref={searchInputRef}
             className="search-input"
             type="text"
             placeholder="검색: 품목/하위/최하위…"
@@ -1528,10 +1574,10 @@ function Home({
             )}
           </div>
 
-          <button className="btn btn-secondary" onClick={() => navigate("/logs")}>
+          <button ref={logsNavButtonRef} className="btn btn-secondary" onClick={() => navigate("/logs")}>
             📘 기록
           </button>
-          <button className="btn btn-ghost" onClick={() => { setTutorialOpen(true); setTutorialStep(0); }}>
+          <button className="btn btn-ghost" onClick={() => { markOnboardingReopened(); setOnboardingMeta(getOnboardingState()); setTutorialOpen(true); setTutorialStep(0); }}>
             🧭 가이드 {onboardingMeta.seen ? (onboardingMeta.status === "completed" ? "(완료)" : "(스킵됨)") : "(필수 1회)"}
           </button>
 
@@ -1694,37 +1740,34 @@ function Home({
         <div className="overlay" onClick={() => setTutorialOpen(false)}>
           <div className="popup glass neon-rise tutorial-popup" onClick={(e) => e.stopPropagation()}>
             <div className="popup-head">
-              <h3 className="popup-title">v1.6.0-beta 통합 온보딩 가이드</h3>
+              <h3 className="popup-title">v1.6.0-beta.2 체험형 온보딩</h3>
               <button className="btn btn-ghost" onClick={() => setTutorialOpen(false)}>닫기</button>
             </div>
             <div className="popup-body">
-              {[
-                { title: "1) 재고 관리 구조", text: "장소 > 카테고리 > 하위 > (필요 시 최하위) > 품목 순서로 관리합니다. 상세 팝업을 열면 details를 모두 자동으로 펼쳐 빠르게 점검할 수 있습니다." },
-                { title: "2) 로그 페이지 핵심", text: "/#/logs 에서 날짜/장소/품목 필터, CSV/Excel 내보내기, 1시간 이내 동일 키 자동 병합을 확인합니다." },
-                { title: "3) 검색과 이동", text: "검색 결과 클릭 시 해당 카드로 이동하고 필요한 details를 자동 오픈합니다." },
-                { title: "4) 권한/자동 로그아웃", text: "관리자만 추가/수정/삭제 버튼을 사용합니다. 10분 무활동이면 자동 로그아웃됩니다." },
-                { title: "5) 일괄 추가와 백업", text: "업로드 전 자동 백업(30분)이 생성되며, 합산/초기화 모드를 선택할 수 있습니다. 업로드는 로그를 만들지 않습니다." },
-              ].map((step, idx) => (
+              {GUIDE_STEPS.map((step, idx) => (
                 <button
                   key={step.title}
                   type="button"
                   className={`tutorial-step ${tutorialStep === idx ? "is-active" : ""}`}
-                  onClick={() => setTutorialStep(idx)}
+                  onClick={() => {
+                    setTutorialStep(idx);
+                    runGuideAction(idx);
+                  }}
                 >
                   <span className="tutorial-bullet">{tutorialStep > idx ? "✅" : tutorialStep === idx ? "👉" : "◯"}</span>
                   <span>
                     <strong>{step.title}</strong>
-                    <small>{step.text}</small>
+                    <small>{step.desc}</small>
                   </span>
                 </button>
               ))}
 
               <div className="tutorial-import-detail">
-                <strong>운영 체크포인트</strong>
+                <strong>첫 진입은 체험형 흐름(강제 유도)입니다.</strong>
                 <ul>
-                  <li>재고 Excel 내보내기 시 0 수량은 "nan"으로 기록되고, 시트2는 품목별 합계를 숫자로 제공합니다.</li>
-                  <li>일괄 추가 파일은 .xlsx/.csv(첫 시트)만 지원합니다.</li>
-                  <li>같은 파일 재업로드 시 수량이 다시 증가할 수 있어 업로드 이력 확인이 필요합니다.</li>
+                  <li>단계마다 해당 화면 위치로 자동 이동하거나, 관련 페이지로 이동합니다.</li>
+                  <li>완료 상태 / 스킵 상태 / 재오픈 상태를 각각 저장합니다.</li>
+                  <li>재오픈 시에는 원하는 단계만 골라 빠르게 복습할 수 있습니다.</li>
                 </ul>
                 <div className="tutorial-actions">
                   <button className="btn btn-secondary" type="button" onClick={beginGuidedTutorial}>
@@ -1742,21 +1785,27 @@ function Home({
 
       {guidedTutorialOpen && (
         <div className="guided-coach" role="status" aria-live="polite">
-          <div className="guided-coach-title">🎯 실전 체험 가이드 {guidedStep + 1}/3</div>
-          {guidedStep === 0 && <p>1) 상단의 <strong>📦 데이터</strong> 버튼을 직접 눌러 메뉴를 열어보세요.</p>}
-          {guidedStep === 1 && <p>2) 열린 메뉴에서 <strong>📥 일괄 추가</strong>를 눌러 진입 흐름을 체험하세요. (체험 모드라 실제 업로드는 진행되지 않습니다)</p>}
-          {guidedStep === 2 && (
-            <div>
-              <p><strong>3) 업로드 체크포인트</strong></p>
-              <ul>
-                <li>실행 직전 30분 백업 생성</li>
-                <li>합산/초기화 모드 선택 확인</li>
-                <li>중복 업로드 시 재증가 주의</li>
-              </ul>
-              <button className="btn btn-primary" onClick={nextGuidedStep}>체험 완료</button>
-            </div>
+          <div className="guided-coach-title">🎯 실전 체험 가이드 {guidedStep + 1}/{GUIDE_STEPS.length}</div>
+          <p><strong>{GUIDE_STEPS[guidedStep]?.title}</strong></p>
+          <p>{GUIDE_STEPS[guidedStep]?.desc}</p>
+          {guidedStep === 5 && (
+            <ul>
+              <li>모바일 스크롤: 카드 내부보다 페이지 스크롤이 먼저 동작하는지 확인</li>
+              <li>로그 필터 접힘: 기록 리스트 스크롤 시 필터가 자동 축소되는지 확인</li>
+              <li>하단 가이드/알림: 서로 겹치지 않고 버튼이 눌리는지 확인</li>
+            </ul>
           )}
-          {guidedStep < 2 && <button className="btn btn-ghost" onClick={() => setGuidedTutorialOpen(false)}>나중에</button>}
+          <div className="tutorial-actions">
+            <button className="btn btn-secondary" onClick={() => runGuideAction(guidedStep)}>
+              {GUIDE_STEPS[guidedStep]?.actionLabel || "위치로 이동"}
+            </button>
+            <button className="btn btn-primary" onClick={nextGuidedStep}>
+              {guidedStep >= GUIDE_STEPS.length - 1 ? "체험 완료" : "다음 단계"}
+            </button>
+            <button className="btn btn-ghost" onClick={() => setGuidedTutorialOpen(false)}>
+              나중에
+            </button>
+          </div>
         </div>
       )}
 
@@ -1787,8 +1836,8 @@ function LogsPage({ logs, setLogs }) {
   const [locationFilter, setLocationFilter] = useState("");
   const [visibleLogsCount, setVisibleLogsCount] = useState(500);
   const [mobileFilterCollapsed, setMobileFilterCollapsed] = useState(false);
+  const [filterExpanded, setFilterExpanded] = useState(true);
   const menuRef = useRef(null);
-  const listScrollRef = useRef(null);
 
   useEffect(() => saveLocalLogs(logs), [logs]);
 
@@ -1830,16 +1879,22 @@ function LogsPage({ logs, setLogs }) {
   useEffect(() => {
     const isMobile = window.matchMedia("(max-width: 960px)").matches;
     if (!isMobile) return;
-    const node = listScrollRef.current || window;
-    let lastTop = 0;
+    let lastTop = window.scrollY || 0;
     const onScroll = () => {
-      const top = node === window ? (window.scrollY || 0) : (node.scrollTop || 0);
-      if (top > lastTop + 8) setMobileFilterCollapsed(true);
-      if (top < lastTop - 8 || top < 16) setMobileFilterCollapsed(false);
+      const top = window.scrollY || 0;
+      const down = top > lastTop + 10;
+      const up = top < lastTop - 10;
+      if (down && top > 120) {
+        setMobileFilterCollapsed(true);
+        setFilterExpanded(false);
+      }
+      if (up || top < 80) {
+        setMobileFilterCollapsed(false);
+      }
       lastTop = top;
     };
-    node.addEventListener("scroll", onScroll, { passive: true });
-    return () => node.removeEventListener("scroll", onScroll);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, [dates.length]);
 
   function formatLabel(d) {
@@ -1927,7 +1982,14 @@ function LogsPage({ logs, setLogs }) {
         </button>
         <h1 className="logo">📘입출고 기록</h1>
 
-        <div className={`toolbar ${mobileFilterCollapsed ? "toolbar-collapsed" : ""}`}>
+        <div className={`toolbar toolbar-logs ${mobileFilterCollapsed ? "toolbar-collapsed" : ""} ${filterExpanded ? "toolbar-expanded" : ""}`}>
+          <button
+            className="btn btn-ghost toolbar-toggle"
+            onClick={() => setFilterExpanded((v) => !v)}
+            aria-expanded={filterExpanded}
+          >
+            {filterExpanded ? "필터 접기 ▲" : "필터 펼치기 ▼"}
+          </button>
           <input
             className="search-input"
             type="text"
@@ -2020,7 +2082,7 @@ function LogsPage({ logs, setLogs }) {
           {dates.map((d) => (
             <section key={d} className="panel glass lift-in">
               <h2 className="panel-title">{formatLabel(d)}</h2>
-              <ul className="log-list" ref={listScrollRef}>
+              <ul className="log-list">
                 {grouped[d].map((l, i) => {
                   const idx = logs.findIndex((x) => x.ts === l.ts && x.key === l.key);
                   return (
@@ -2313,7 +2375,8 @@ export default function AppWrapper() {
   return (
     <>
       <Toaster
-        position="bottom-right"
+        containerClassName="app-toaster"
+        position={typeof window !== "undefined" && window.matchMedia("(max-width: 720px)").matches ? "top-center" : "bottom-right"}
         toastOptions={{
           style: {
             background: "#0b1020",
@@ -2321,7 +2384,7 @@ export default function AppWrapper() {
             border: "1px solid #243056",
             borderRadius: "14px",
             fontWeight: 600,
-            fontSize: "1.02rem",
+            fontSize: "0.98rem",
           },
           success: { style: { background: "#07101f", color: "#53ffe9" } },
           error: { style: { background: "#160b12", color: "#ff7ba1" } },

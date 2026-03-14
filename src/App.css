@@ -965,3 +965,76 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
 .guided-coach p{ margin:6px 0 8px; }
 .guided-coach ul{ margin:6px 0 10px 18px; }
 .guided-coach .btn{ margin-right:6px; }
+/* ===== v1.6.0-beta.2: 모바일 스크롤/온보딩/로그 필터 UX 보강 ===== */
+/*
+  이 블록은 기존 스타일을 대체하지 않고 "회귀 없이 덮어쓰기" 방식으로 동작한다.
+  - 무엇: 모바일 카드/카테고리 스크롤 우선순위 재설계
+  - 왜: 내부 overflow가 페이지 스크롤을 가로막는 문제를 줄이기 위해
+  - 어디 수정: 높이 임계값은 .summary-grid .card-body max-height 구간에서 조정
+*/
+@media (max-width: 960px) {
+  .summary-grid .card-body {
+    overflow: visible !important;
+    max-height: none !important;
+    overscroll-behavior: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .popup .popup-body {
+    max-height: min(74vh, 720px);
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* 콘텐츠가 긴 경우에만 내부 스크롤 허용(중/대화면) */
+@media (min-width: 961px) {
+  .summary-grid .card-body {
+    max-height: clamp(280px, 42vh, 520px);
+    overflow: auto !important;
+  }
+}
+
+/* 로그 페이지 필터: 자동 접힘 + 수동 토글 공존 */
+.toolbar-logs .toolbar-toggle {
+  display: none;
+}
+@media (max-width: 960px) {
+  .toolbar-logs {
+    position: sticky;
+    top: 8px;
+    z-index: 12;
+    background: rgba(8, 16, 34, 0.9);
+    border: 1px solid rgba(136, 167, 255, 0.25);
+    border-radius: 12px;
+    padding: 8px;
+    backdrop-filter: blur(6px);
+  }
+  .toolbar-logs .toolbar-toggle {
+    display: inline-flex;
+    width: 100%;
+    justify-content: center;
+  }
+  .toolbar-logs.toolbar-collapsed:not(.toolbar-expanded) > :not(.toolbar-toggle):not(:first-child) {
+    display: none;
+  }
+}
+
+/* 하단 가이드 + 토스트 겹침 방지 */
+.guided-coach {
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 1000;
+}
+@media (max-width: 720px) {
+  .guided-coach {
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    max-width: none;
+  }
+}
+
+.app-toaster {
+  z-index: 1400;
+}
