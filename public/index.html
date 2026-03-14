@@ -123,8 +123,9 @@
       (function(){
         /* 버전 표기 */
         try{
-          var v = localStorage.getItem('do-kkae-bi-app-version') || 'dev';f
-          var el = document.getElementById('splash-ver'); if(el) el.textContent = v;
+          var v = localStorage.getItem('do-kkae-bi-app-version') || 'dev';
+          var el = document.getElementById('splash-ver'); 
+          if(el) el.textContent = v;
         }catch(e){}
       // 앱에서 최신 버전 브로드캐스트 시 즉시 반영
       window.addEventListener('dokkaebi-version', function(e){
