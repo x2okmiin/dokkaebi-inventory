@@ -340,13 +340,14 @@ function Home({
   // [P1-B] 백업 메타 상태
   const [backupMeta, setBackupMeta] = useState(() => hasBackup());
   const backupRefresh = React.useCallback(() => setBackupMeta(hasBackup()), []);
+
   const [highlightKey, setHighlightKey] = useState("");
   const [searchVisibleCount, setSearchVisibleCount] = useState(20);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0);
   const [guidedTutorialOpen, setGuidedTutorialOpen] = useState(false);
   const [guidedStep, setGuidedStep] = useState(0);
-  const tutorialSeenKey = "do-kkae-bi-tutorial-seen-v1.6.0";
+  const tutorialSeenKey = "do-kkae-bi-tutorial-seen-v1.5.9-beta.5";
   const dataMenuButtonRef = useRef(null);
   const importMenuItemRef = useRef(null);
 

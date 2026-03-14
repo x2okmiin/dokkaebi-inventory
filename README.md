@@ -132,8 +132,11 @@ npm start
 GitHub Pages 정적 배포 + 원클릭 스크립트(`scripts/ud`).
 
 ```bash
-# 버전/태그/빌드/배포
-npm run ud -- 1.6.0 "(release): v1.6.0"
+# 버전만 넘기면 scripts/ud가 package.json/.env.local/태그를 자동 갱신
+npm run ud -- 1.6.0
+
+# (선택) 커밋 메시지 직접 지정
+npm run ud -- 1.6.0 "chore(release): v1.6.0"
 ```
 
 * `.env.local`에 버전 기록 → 태그 생성 → 빌드 → gh-pages 푸시
