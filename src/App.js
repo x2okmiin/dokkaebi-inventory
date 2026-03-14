@@ -9,18 +9,28 @@
    - 섹션별 주석을 유지해 가독성과 회귀 테스트를 용이하게 합니다.
    ========================================================================== */
 
-// src/App.js  — 통합/정리본 (자동 새로고침 제거, 구문 오류 정리, 2×2 그리드 유지)
-import React, { useState, useEffect, useRef, useMemo } from "react";
-import { HashRouter as Router, Routes, Route, useNavigate, Navigate } from "react-router-dom";
-import * as XLSX from "xlsx";
-import "./App.css";
-import LoginPage from "./LoginPage";
-import { Toaster, toast } from "react-hot-toast";
+// src/App.js  — 통합본 (중복/경고 제거, 새 기기 부트 게이트, 2×2 그리드 유지)
 
-/* Firebase 래퍼 */
-import { ref, set, onValue, push, update, remove } from "./firebase";
+ import React, { useState, useEffect, useRef, useMemo } from "react";
+ import { HashRouter as Router, Routes, Route, useNavigate, Navigate } from "react-router-dom";
+ import * as XLSX from "xlsx";
+ import "./App.css";
+ 
+ import LoginPage from "./LoginPage";
+ import { Toaster, toast } from "react-hot-toast";
+ import { ref, set, onValue, push, update, remove } from "./firebase";
+// [P1-A] 백업 유틸 임포트
+import { createBackup, hasBackup, restoreBackup, describeBackup } from "./utils/backup";
 
-/* 버전 라벨 */
+
+ // Boot/Fallback config (⚠️ 모든 import 뒤, 다른 실행코드/선언 앞)
+const BOOT_FORCE_HIDE_MS = 8000;      // 스플래시 강제 닫기
+const BOOT_FALLBACK_FLAG_MS = 12000;  // 네트워크 지연 감지 표시
+
+
+/* =========================
+   버전 라벨
+   ========================= */
 const APP_VERSION =
   process.env.REACT_APP_VERSION ||
   localStorage.getItem("do-kkae-bi-app-version") ||
@@ -68,8 +78,7 @@ const catIcon = (cat) => catIcons[cat] || "📦";
 function getLocalInventory() {
   const d = localStorage.getItem("do-kkae-bi-inventory");
   if (d) return JSON.parse(d);
-
-  // 최초 기동 시 스키마 템플릿 생성
+  // 최초 템플릿 생성
   const base = {};
   locations.forEach((loc) => {
     base[loc] = {};
@@ -118,27 +127,20 @@ function getLocalUserName() {
 }
 
 /** 강제 로그아웃 — 전역 유틸(HashRouter 기준, 자동 새로고침 제거) */
- function hardLogout() {
-   clearLocalSession();
-   try { localStorage.removeItem("do-kkae-bi-login-ts"); } catch {}
-   // 라우팅 이동 + 렌더 트리거
-   window.location.hash = "#/login";
-   try { window.dispatchEvent(new Event("dokkebi-auth-changed")); } catch {}
-   /** 세션(관리자/UID/이름) 완전 초기화 — 전역 유틸 */
-   function clearLocalSession() {
-    try {
-      localStorage.removeItem("do-kkae-bi-user-id");
-      localStorage.removeItem("do-kkae-bi-user-name");
-      sessionStorage.removeItem("do-kkae-bi-admin");
-    } catch (e) {
-      console.warn("clearLocalSession warning:", e);
-    }
-    try {
-      localStorage.setItem("do-kkae-bi-admin", "false");
-    } catch (e) {
-      console.warn("saveLocalAdmin(false) fallback:", e);
-    }
+function hardLogout() {
+  // 세션(관리자/UID/이름) 초기화
+  try {
+    localStorage.removeItem("do-kkae-bi-user-id");
+    localStorage.removeItem("do-kkae-bi-user-name");
+    sessionStorage.removeItem("do-kkae-bi-admin");
+    localStorage.removeItem("do-kkae-bi-login-ts");
+    localStorage.setItem("do-kkae-bi-admin", "false");
+  } catch (e) {
+    console.warn("hardLogout warning:", e);
   }
+  // 라우팅 이동 + 렌더 트리거
+  window.location.hash = "#/login";
+  try { window.dispatchEvent(new Event("dokkebi-auth-changed")); } catch {}
 }
 
 /* =========================
@@ -179,6 +181,7 @@ function NeonBackdrop() {
 /* =========================
    4) 공용 유틸
    ========================= */
+   
 function normalizeLogsVal(val) {
   if (!val) return [];
   if (Array.isArray(val)) {
@@ -273,6 +276,36 @@ function sanitizeInventoryKeys(src) {
   return { inv, bad };
 }
 
+/* ===== Boot Loading: 기존 스플래시(#app-splash)와 통합 ===== */
+function BootLoading({ hint = "새 기기 · 첫 동기화", fallback = false }) {
+  React.useEffect(() => {
+    const splash = document.getElementById("app-splash");
+    if (!splash) return; // 스플래시가 이미 닫혔으면 아무것도 안 함
+
+    // ① 상단 상태 문구
+    let sub = splash.querySelector(".splash-sub");
+    if (!sub) {
+      sub = document.createElement("div");
+      sub.className = "splash-sub";
+      splash.appendChild(sub);
+    }
+    sub.textContent = "최신 데이터 수신 중…";
+
+    // ② 하단 메타(모드/폴백)
+    let meta = splash.querySelector(".splash-meta");
+    if (!meta) {
+      meta = document.createElement("div");
+      meta.className = "splash-meta";
+      splash.appendChild(meta);
+    }
+    meta.textContent = `모드: ${hint}${fallback ? " · 네트워크 지연 감지(임시 통과)" : ""}`;
+  }, [hint, fallback]);
+
+  // 렌더링은 안 함(기존 스플래시만 업데이트)
+  return null;
+}
+
+
 /* =========================
    5) 홈(재고) 화면
    ========================= */
@@ -287,8 +320,6 @@ function Home({
   userId,
   userName,
 }) {
-  // ※ 스플래시 관련 ref는 AppWrapper에서만 관리 (여기서 제거)
-
   const resetAllRef = useRef(false);
   const navigate = useNavigate();
   const categoryRefs = useRef({});
@@ -299,6 +330,11 @@ function Home({
   const dataMenuRef = useRef(null);
   const [openPanel, setOpenPanel] = useState(null);
   const [editKey, setEditKey] = useState(null);
+  // [P1-B] 백업 메타 상태
+  const [backupMeta, setBackupMeta] = useState(() => hasBackup());
+  const backupRefresh = React.useCallback(() => setBackupMeta(hasBackup()), []);
+
+
 
   // 시트 → JSON 로우 파싱(헤더 유연 + 'nan' 등 빈값 처리)
   function normalizeRow(r) {
@@ -402,7 +438,7 @@ function Home({
     e.preventDefault();
     e.stopPropagation();
     const ok = window.confirm(
-      "⚠️ 일괄 추가(베타)\n\n- 로그를 남기지 않고 재고만 변경합니다.\n- 실행 전 '재고 Excel 내보내기'로 백업을 권장합니다.\n\n계속할까요?"
+      "⚠️ 일괄 추가\n\n- 로그를 남기지 않고 재고만 변경합니다.\n- 실행 전 '재고 Excel 내보내기'로 백업을 권장합니다.\n\n계속할까요?"
     );
     if (!ok) return;
 
@@ -443,6 +479,11 @@ function Home({
         invalid = 0;
       const invalidSamples = [];
 
+      // [P1-C] 업로드 적용 직전 — 인벤토리 스냅샷 백업
+      createBackup(JSON.parse(JSON.stringify(inventory)));
+      backupRefresh();
+
+
       setInventory((prev) => {
         const next = resetAllRef.current ? createEmptyInventory() : JSON.parse(JSON.stringify(prev));
         resetAllRef.current = false;
@@ -455,7 +496,7 @@ function Home({
           const cSub2 = sub2 ? canonSub2Name(cCat, cSub, sub2) : "";
 
           if (!cLoc || !locations.includes(cLoc)) continue;
-          if (!name || !Number.isFinite(qty)) continue; 
+          if (!name || !Number.isFinite(qty)) continue;
 
           if (!isValidPath(cCat, cSub, cSub2)) {
             invalid++;
@@ -472,12 +513,11 @@ function Home({
             increased++;
             applied++;
           } else {
-              arr.push({
-                name,
-                // DB/상태에는 항상 유효 숫자 보관 (0 또는 양수)
-                count: qty > 0 ? Number(qty) : 0,
-                ...(note ? { note } : {}),
-              });
+            arr.push({
+              name,
+              count: qty > 0 ? Number(qty) : 0,
+              ...(note ? { note } : {}),
+            });
             added++;
             applied++;
           }
@@ -508,6 +548,14 @@ function Home({
       toast.error(`가져오기 실패: ${err?.message || String(err)}`);
     }
   }
+  
+  // [P1-F] 백업 메타 주기적 갱신(선택)
+  useEffect(() => {
+    backupRefresh(); // 마운트 시 1회
+    const t = setInterval(backupRefresh, 60 * 1000);
+    return () => clearInterval(t);
+  }, [backupRefresh]);
+
 
   // 동기화 인디케이터
   useEffect(() => {
@@ -566,136 +614,137 @@ function Home({
     };
   }, []);
 
- /* ===== 내보내기 ===== */
-/**
- * 요구사항
- * 1) 세 장소(동아리방/비행장/교수님방)에 대해,
- *    어떤 품목이든 각 장소별로 반드시 1행씩 배출 (모두 0이어도 누락 금지)
- * 2) 수량이 0(또는 없음)인 경우, 엑셀에는 숫자 0이 아니라 **문자열 'NaN'** 으로 기록
- *    -> 일괄 추가(베타) 업로더가 무시하도록 하기 위함 (§9 사양)
- * 3) 기존 두 번째 시트(품목별 합계)는 숫자 합계를 정상 표기 (NaN 문자열과 무관)
- */
-function exportInventoryExcel() {
-  const HEADER = ["장소", "상위카테고리", "하위카테고리", "최하위카테고리", "품목명", "수량", "메모"];
+  // [P1-D] 백업에서 복구
+  async function handleRestoreFromBackup() {
+    const meta = hasBackup();
+    if (!meta.ok) {
+      toast.error(meta.reason === "만료" ? "백업이 만료되었습니다(30분 경과)." : "복구할 백업이 없습니다.");
+      backupRefresh();
+      return;
+    }
 
-  const toNaNString = (v) => {
-    // 0(또는 결측)인 경우 업로더 무시를 위해 문자열 'nan'로 내보냄
-    if (v === 0 || v == null || Number.isNaN(v)) return "nan";
-    return v;
-  };
+    toast.loading("백업에서 복구 중…", { id: "bk" });
+    const res = await restoreBackup(async (snapshot) => {
+      // RTDB 저장은 AppWrapper의 useEffect([inventory])가 처리하므로,
+      // 여기서는 상태만 되돌리면 됨.
+      setInventory(JSON.parse(JSON.stringify(snapshot)));
+      return { ok: true };
+    });
 
-  // 모든 장소에서 등장하는 "경로+품목"의 전체 집합을 만든다.
-  // key: `${cat}|||${sub||''}|||${sub2||''}|||${itemName}`
-  const allItemKeys = new Set();
+    if (res.ok) toast.success("복구 완료! (재고를 백업 시점으로 되돌렸어요)", { id: "bk" });
+    else toast.error(`복구 실패: ${res.reason || "알 수 없는 오류"}`, { id: "bk" });
 
-  // 경로를 훑으며 key 수집
-  for (const loc of locations) {
-    Object.entries(subcategories).forEach(([cat, subs]) => {
-      if (Array.isArray(subs)) {
-        // 2단: cat -> sub -> items[]
-        subs.forEach((sub) => {
-          (getItems(inventory, loc, cat, sub) || []).forEach((it) => {
-            allItemKeys.add(`${cat}|||${sub}|||${""}|||${it.name}`);
-          });
-        });
-      } else {
-        // 3단: cat -> sub -> sub2? -> items[]
-        Object.entries(subs).forEach(([sub, subs2]) => {
-          if (Array.isArray(subs2)) {
+    backupRefresh();
+  }
+
+
+  /* ===== 내보내기 ===== */
+  function exportInventoryExcel() {
+    const HEADER = ["장소", "상위카테고리", "하위카테고리", "최하위카테고리", "품목명", "수량", "메모"];
+
+    const toNaNString = (v) => {
+      if (v === 0 || v == null || Number.isNaN(v)) return "nan";
+      return v;
+    };
+
+    // 모든 장소에서 등장하는 "경로+품목" 전체 키 집합 생성
+    const allItemKeys = new Set();
+
+    for (const loc of locations) {
+      Object.entries(subcategories).forEach(([cat, subs]) => {
+        if (Array.isArray(subs)) {
+          subs.forEach((sub) => {
             (getItems(inventory, loc, cat, sub) || []).forEach((it) => {
               allItemKeys.add(`${cat}|||${sub}|||${""}|||${it.name}`);
             });
-          } else {
-            Object.keys(subs2).forEach((sub2) => {
-              (getItems(inventory, loc, cat, sub, sub2) || []).forEach((it) => {
-                allItemKeys.add(`${cat}|||${sub}|||${sub2}|||${it.name}`);
+          });
+        } else {
+          Object.entries(subs).forEach(([sub, subs2]) => {
+            if (Array.isArray(subs2)) {
+              (getItems(inventory, loc, cat, sub) || []).forEach((it) => {
+                allItemKeys.add(`${cat}|||${sub}|||${""}|||${it.name}`);
               });
-            });
-          }
-        });
-      }
-    });
-  }
-
-  // 행 생성: 모든 key * 각 장소 → 반드시 한 줄씩
-  const rows = [];
-  // 품목별 합계 계산용(숫자 합계)
-  const itemTotals = {}; // { [itemName]: { 합계: number, 장소별: { [loc]: number } } }
-
-  const addItemTotal = (name, loc, countNum) => {
-    if (!itemTotals[name]) itemTotals[name] = { 합계: 0, 장소별: {} };
-    itemTotals[name].합계 += countNum || 0;
-    itemTotals[name].장소별[loc] = (itemTotals[name].장소별[loc] || 0) + (countNum || 0);
-  };
-
-  // 아이템 조회 헬퍼 (count + note 동시 조회)
-  const findItem = (loc, cat, sub, sub2, itemName) => {
-    const arr = getItems(inventory, loc, cat, sub, sub2);
-    if (!arr || !arr.length) return { count: 0, note: "" };
-    const found = arr.find((x) => (x?.name || "") === itemName);
-    return {
-      count: Number(found?.count || 0),
-      note: found?.note ?? "",
-    };
-  };
-
-  for (const key of allItemKeys) {
-    const [cat, sub, sub2, itemName] = key.split("|||");
-    for (const loc of locations) {
-      const { count: countNum, note } = findItem(loc, cat, sub || "", sub2 || "", itemName);
-      rows.push({
-        장소: loc,
-        상위카테고리: cat,
-        하위카테고리: sub || "",
-        최하위카테고리: sub2 || "",
-        품목명: itemName,
-        수량: toNaNString(countNum),  // ★ 0 → 'nan'
-        메모: note,                   // ★ 해당 장소의 아이템 메모 반영
+            } else {
+              Object.keys(subs2).forEach((sub2) => {
+                (getItems(inventory, loc, cat, sub, sub2) || []).forEach((it) => {
+                  allItemKeys.add(`${cat}|||${sub}|||${sub2}|||${it.name}`);
+                });
+              });
+            }
+          });
+        }
       });
-      // 합계는 숫자로 계산
-      addItemTotal(itemName, loc, countNum);
     }
+
+    // 행 생성 및 품목별 합계
+    const rows = [];
+    const itemTotals = {}; // { [name]: { 합계: number, 장소별: { [loc]: number } } }
+
+    const addItemTotal = (name, loc, countNum) => {
+      if (!itemTotals[name]) itemTotals[name] = { 합계: 0, 장소별: {} };
+      itemTotals[name].합계 += countNum || 0;
+      itemTotals[name].장소별[loc] = (itemTotals[name].장소별[loc] || 0) + (countNum || 0);
+    };
+
+    const findItem = (loc, cat, sub, sub2, itemName) => {
+      const arr = getItems(inventory, loc, cat, sub, sub2);
+      if (!arr || !arr.length) return { count: 0, note: "" };
+      const found = arr.find((x) => (x?.name || "") === itemName);
+      return { count: Number(found?.count || 0), note: found?.note ?? "" };
+    };
+
+    for (const key of allItemKeys) {
+      const [cat, sub, sub2, itemName] = key.split("|||");
+      for (const loc of locations) {
+        const { count: countNum, note } = findItem(loc, cat, sub || "", sub2 || "", itemName);
+        rows.push({
+          장소: loc,
+          상위카테고리: cat,
+          하위카테고리: sub || "",
+          최하위카테고리: sub2 || "",
+          품목명: itemName,
+          수량: toNaNString(countNum),
+          메모: note,
+        });
+        addItemTotal(itemName, loc, countNum);
+      }
+    }
+
+    rows.sort((a, b) => {
+      if (a.장소 !== b.장소) return a.장소.localeCompare(b.장소);
+      if (a.상위카테고리 !== b.상위카테고리) return a.상위카테고리.localeCompare(b.상위카테고리);
+      if ((a.하위카테고리 || "") !== (b.하위카테고리 || "")) return (a.하위카테고리 || "").localeCompare(b.하위카테고리 || "");
+      if ((a.최하위카테고리 || "") !== (b.최하위카테고리 || "")) return (a.최하위카테고리 || "").localeCompare(b.최하위카테고리 || "");
+      return a.품목명.localeCompare(b.품목명);
+    });
+
+    const ws = XLSX.utils.json_to_sheet([], { header: HEADER });
+    XLSX.utils.sheet_add_aoa(ws, [HEADER], { origin: "A1" });
+    XLSX.utils.sheet_add_json(ws, rows, { origin: "A2", skipHeader: true });
+
+    // 자동 열너비
+    const colWidths = HEADER.map((h) => {
+      const maxLen = Math.max(
+        h.length,
+        ...rows.map((r) => (r[h] !== undefined && r[h] !== null ? String(r[h]).length : 0))
+      );
+      return { wch: Math.min(Math.max(10, maxLen + 2), 40) };
+    });
+    ws["!cols"] = colWidths;
+
+    // 시트2: 품목별 합계
+    const totalRows = Object.entries(itemTotals).map(([name, info]) => ({
+      품목명: name,
+      총합계: info.합계,
+      ...info.장소별,
+    }));
+    const wsTotals = XLSX.utils.json_to_sheet(totalRows);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "재고현황");
+    XLSX.utils.book_append_sheet(wb, wsTotals, "품목별 합계");
+    XLSX.writeFile(wb, `재고현황_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
-
-  // 정렬: 장소 > 상위 > 하위 > 최하위 > 품목명
-  rows.sort((a, b) => {
-    if (a.장소 !== b.장소) return a.장소.localeCompare(b.장소);
-    if (a.상위카테고리 !== b.상위카테고리) return a.상위카테고리.localeCompare(b.상위카테고리);
-    if ((a.하위카테고리 || "") !== (b.하위카테고리 || "")) return (a.하위카테고리 || "").localeCompare(b.하위카테고리 || "");
-    if ((a.최하위카테고리 || "") !== (b.최하위카테고리 || "")) return (a.최하위카테고리 || "").localeCompare(b.최하위카테고리 || "");
-    return a.품목명.localeCompare(b.품목명);
-  });
-
-  // 시트1: 재고현황(일괄추가 호환)
-  const ws = XLSX.utils.json_to_sheet([], { header: HEADER });
-  XLSX.utils.sheet_add_aoa(ws, [HEADER], { origin: "A1" });
-  XLSX.utils.sheet_add_json(ws, rows, { origin: "A2", skipHeader: true });
-
-  // 자동 열너비
-  const colWidths = HEADER.map((h) => {
-    const maxLen = Math.max(
-      h.length,
-      ...rows.map((r) => (r[h] !== undefined && r[h] !== null ? String(r[h]).length : 0))
-    );
-    return { wch: Math.min(Math.max(10, maxLen + 2), 40) };
-  });
-  ws["!cols"] = colWidths;
-
-  // 시트2: 품목별 합계(숫자)
-  const totalRows = Object.entries(itemTotals).map(([name, info]) => ({
-    품목명: name,
-    총합계: info.합계,
-    ...info.장소별,
-  }));
-  const wsTotals = XLSX.utils.json_to_sheet(totalRows);
-
-  // 워크북 생성 및 저장
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "재고현황");
-  XLSX.utils.book_append_sheet(wb, wsTotals, "품목별 합계");
-
-  XLSX.writeFile(wb, `재고현황_${new Date().toISOString().slice(0,10)}.xlsx`);
-}
 
   /* ===== 수량 증감 ===== */
   function handleUpdateItemCount(loc, cat, sub, idx, delta, sub2) {
@@ -915,7 +964,7 @@ function exportInventoryExcel() {
       operatorId: userId,
       operatorName: userName,
     };
-    setLogs((prev) => [{ id: `local-${ts}`, ...logObj }, ...prev ]);
+    setLogs((prev) => [{ id: `local-${ts}`, ...logObj }, ...prev]);
     const newRef = push(ref("logs/"));
     set(newRef, logObj).catch((err) => toast.error(`삭제 로그 기록 실패: ${err?.code || err?.message || err}`));
 
@@ -932,7 +981,6 @@ function exportInventoryExcel() {
   const filtered = useMemo(() => {
     const q = (searchTerm || "").trim().toLowerCase();
     if (!q) return [];
-
     const out = [];
     Object.entries(inventory).forEach(([loc, cats]) => {
       Object.entries(cats || {}).forEach(([cat, subs]) => {
@@ -957,7 +1005,8 @@ function exportInventoryExcel() {
                 const sub2L = (sub2 || "").toLowerCase();
                 (arr || []).forEach((i) => {
                   const nameL = (i.name || "").toLowerCase();
-                  if (nameL.includes(q) || subL.includes(q) || sub2L.includes(q)) out.push({ loc, cat, sub, sub2, ...i });
+                  if (nameL.includes(q) || subL.includes(q) || sub2L.includes(q))
+                    out.push({ loc, cat, sub, sub2, ...i });
                 });
               });
             }
@@ -1009,7 +1058,7 @@ function exportInventoryExcel() {
     setEditKey((prev) => (prev === key ? null : key));
   };
 
-  /* ===== 카드 렌더 도우미 ===== */
+  /* ===== 카드 렌더 ===== */
   const renderItemRow = (loc, cat, sub, it, idx, sub2) => {
     const rowKey = `${loc}|${cat}|${sub2 ? `${sub}/${sub2}` : sub}|${it.name}|${idx}`;
     const open = editKey === rowKey;
@@ -1281,7 +1330,6 @@ function exportInventoryExcel() {
       <FixedBg src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`} overlay="rgba(0,0,0,.18)" />
       <NeonBackdrop />
       <header className="topbar glass">
-        {/* 헤더 타이틀 */}
         <h1 className="logo">
           <span className="glow-dot" /> DOKKEBI<span className="thin">/</span>INVENTORY
           <button
@@ -1296,7 +1344,8 @@ function exportInventoryExcel() {
               );
               if (next === null) return;
               localStorage.setItem("do-kkae-bi-app-version", String(next).trim());
-              window.location.hash = "#/"; // 라벨 즉시 반영 (새로고침 없음)
+              window.location.hash = "#/";
+              try { window.dispatchEvent(new Event("dokkebi-auth-changed")); } catch {}
             }}
           >
             v{APP_VERSION}
@@ -1341,15 +1390,14 @@ function exportInventoryExcel() {
                     onClick={handleImportClick}
                     title="CSV/XLSX에서 재고를 일괄 추가합니다(로그 미생성)"
                   >
-                    📥 일괄 추가 (베타)
+                    📥 일괄 추가
                   </button>
                 ) : (
                   <button className="menu-item disabled" disabled title="관리자 전용">
-                    📥 가져오기 (베타)
+                    📥 가져오기 (관리자 테스트)
                   </button>
                 )}
 
-                {/* 숨김 파일 입력 */}
                 <input
                   ref={importInputRef}
                   type="file"
@@ -1357,6 +1405,19 @@ function exportInventoryExcel() {
                   style={{ display: "none" }}
                   onChange={onImportFileChange}
                 />
+                    {/* [P1-E] 30분 내 백업 되돌리기 */}
+                  <button
+                    className={`menu-item${backupMeta.ok ? "" : " disabled"}`}
+                    onClick={() => {
+                      if (!backupMeta.ok) return;
+                      handleRestoreFromBackup();
+                      setDataMenuOpen(false);
+                    }}
+                    disabled={!backupMeta.ok}
+                    title={backupMeta.ok ? `백업: ${describeBackup()}` : "최근 30분 내 백업 없음"}
+                  >
+                    ⏪ 30분 내 백업 되돌리기 {backupMeta.ok ? `(${describeBackup()})` : "(없음)"}
+                  </button>
               </div>
             )}
           </div>
@@ -1366,12 +1427,7 @@ function exportInventoryExcel() {
           </button>
 
           {(isAdmin || (userId && userName)) && (
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                hardLogout();
-              }}
-            >
+            <button className="btn btn-ghost" onClick={() => hardLogout()}>
               🚪 로그아웃
             </button>
           )}
@@ -1442,7 +1498,6 @@ function exportInventoryExcel() {
 
       {/* 카드 그리드 (장소 3 + 전체 1 = 2×2 배열) */}
       <section className="grid summary-grid">
-        {/* 장소 카드 */}
         {locations.map((loc) => (
           <div key={loc} className="card glass hover-rise" ref={(el) => (cardRefs.current[loc] = el)}>
             <div className="card-head head-split">
@@ -1790,12 +1845,49 @@ function LogsPage({ logs, setLogs }) {
    7) AppWrapper (실시간 동기화)
    ========================= */
 export default function AppWrapper() {
+  // 0) 새 기기 부트 게이트
+  const [isFreshDevice, setIsFreshDevice] = useState(() => localStorage.getItem("do-kkae-bi-has-synced") !== "true");
+  const [bootSynced, setBootSynced] = useState(false);
+  const [fallbackFired, setFallbackFired] = useState(false);
+
+  // 1) 재고/검색/로그 상태 (⚠️ 반드시 최상단에 선언해서 아래에서 참조 가능하게!)
   const [inventory, setInventory] = useState(getLocalInventory);
   const [searchTerm, setSearchTerm] = useState("");
   const [logs, setLogs] = useState(getLocalLogs);
 
-  // 🔄 auth 변경 시 재렌더를 트리거하는 틱
-  const [authTick, setAuthTick] = useState(0);
+  // 2) 부트 플래그 & 헬퍼
+  const bootRef = useRef({ inv: false, logs: false, fired: false });
+
+  const fireReadyOnce = () => {
+    if (bootRef.current.fired) return;
+    bootRef.current.fired = true;
+    try { 
+      // 부팅 직후에는 스플래시 닫지 않음 (실제 동기화/폴백에서만 닫기)
+      // window.dispatchEvent(new Event("dokkebi-ready")); 
+      
+    } catch {}
+  };
+
+  // 3) 지연 폴백 (12초): 새 기기 + 아직 부트 미완료면 임시 통과
+  useEffect(() => {
+    if (!isFreshDevice || bootSynced) return;
+    const t = setTimeout(() => {
+      setFallbackFired(true);
+      setBootSynced(true);                 // 화면은 열어줌 (임시 통과)
+      try { localStorage.setItem("do-kkae-bi-has-synced", "true"); } catch {}
+      fireReadyOnce();                     // 스플래시 닫기
+      // 실제 두 스냅샷이 나중에라도 들어오면 onValue 쪽에서 정상 완료 처리됨
+    }, BOOT_FALLBACK_FLAG_MS);
+    return () => clearTimeout(t);
+  }, [isFreshDevice, bootSynced]);
+
+  // 4) 부트 완료 후 fresh 플래그 해제
+  useEffect(() => {
+    if (bootSynced && isFreshDevice) setIsFreshDevice(false);
+  }, [bootSynced, isFreshDevice]);
+
+  // 🔄 auth 변경 시 재렌더 트리거
+  const [, setAuthTick] = useState(0);
   useEffect(() => {
     const onAuth = () => setAuthTick((v) => v + 1);
     window.addEventListener("dokkebi-auth-changed", onAuth);
@@ -1804,33 +1896,23 @@ export default function AppWrapper() {
       window.removeEventListener("dokkebi-auth-changed", onAuth);
       window.removeEventListener("storage", onAuth);
     };
-    
-  }, [authTick]);
+  }, []);
 
-  // 매 렌더마다 최신 스토리지 값을 읽음 (authTick 변화로 재계산됨)
+  // 매 렌더마다 최신 스토리지 값을 읽음 (authTick 변화로 재계산)
   const isAdmin = getLocalAdmin();
   const userId = getLocalUserId();
   const userName = getLocalUserName();
+  const isLoggedIn = !!(isAdmin || (userId && userName));
 
-   const isLoggedIn = !!(isAdmin || (userId && userName));
-
+  // RTDB 적용 플래그/스냅샷 보관
   const applyingCloudRef = useRef({ inv: false, logs: false });
   const invStateRef = useRef(inventory);
   const logsStateRef = useRef(logs);
 
-  const bootRef = useRef({ inv: false, logs: false, fired: false });
-  const fireReadyOnce = () => {
-    if (bootRef.current.fired) return;
-    bootRef.current.fired = true;
-    try {
-      window.dispatchEvent(new Event("dokkebi-ready"));
-    } catch (e) {}
-  };
-
-  // ✅ 스플래시 폴백 타이머 ref (AppWrapper 전용)
+  // ✅ 스플래시 폴백 타이머 ref
   const splashTimeoutRef = useRef(null);
 
-  // 앱 부팅: 버전 라벨 갱신 + 스플래시 닫기 트리거
+  // 앱 부팅: 버전 라벨 갱신 + 스플래시 닫기 트리거 이벤트
   useEffect(() => {
     try {
       const envV = process.env.REACT_APP_VERSION || "dev";
@@ -1872,8 +1954,16 @@ export default function AppWrapper() {
         setInventory(cloud);
       }
       if (!bootRef.current.inv) {
-        bootRef.current.inv = true;
-        if (bootRef.current.logs) fireReadyOnce();
+        bootRef.current.inv = true;     // 첫 인벤토리 스냅샷 도착
+       // ✅ 부트 완료 체크: 인벤토리+로그 모두 수신되면 부트 완료
+       if (bootRef.current.logs && !bootSynced) {
+         setBootSynced(true);
+            try {
+              localStorage.setItem("do-kkae-bi-has-synced", "true");
+              localStorage.setItem("do-kkae-bi-last-sync-ts", String(Date.now()));
+            } catch {}
+         fireReadyOnce();
+       }
       }
     });
 
@@ -1885,8 +1975,16 @@ export default function AppWrapper() {
         setLogs(normalized);
       }
       if (!bootRef.current.logs) {
-        bootRef.current.logs = true;
-        if (bootRef.current.inv) fireReadyOnce();
+        bootRef.current.logs = true;    // 첫 로그 스냅샷 도착
+       // ✅ 부트 완료 체크: 인벤토리+로그 모두 수신되면 부트 완료
+       if (bootRef.current.inv && !bootSynced) {
+         setBootSynced(true);
+          try {
+            localStorage.setItem("do-kkae-bi-has-synced", "true");
+            localStorage.setItem("do-kkae-bi-last-sync-ts", String(Date.now()));
+          } catch {}
+         fireReadyOnce();
+       }
       }
     });
 
@@ -1894,20 +1992,20 @@ export default function AppWrapper() {
       unsubInv();
       unsubLogs();
     };
-  }, []);
+  }, [bootSynced]);
 
-  // RTDB 지연 대비 8초 폴백(스플래시 강제 닫기)
+  // RTDB 지연 대비 (8초) 스플래시 강제 닫기
   useEffect(() => {
-    splashTimeoutRef.current = setTimeout(() => {
-      fireReadyOnce();   // 8초 동안 ready가 안 오면 강제로 스플래시 닫기
-    }, 8000);
-    return () => {
-      if (splashTimeoutRef.current) {
-        clearTimeout(splashTimeoutRef.current);
-        splashTimeoutRef.current = null;
-      }
-    };
-  }, []);
+   splashTimeoutRef.current = setTimeout(() => {
+     fireReadyOnce();   // 8초 동안 ready가 안 오면 강제 닫기
+    }, BOOT_FORCE_HIDE_MS);
+     return () => {
+       if (splashTimeoutRef.current) {
+         clearTimeout(splashTimeoutRef.current);
+         splashTimeoutRef.current = null;
+       }
+     };
+   }, []);
 
   // 스플래시: ready 이벤트 수신 시 닫기 (+ 폴백 타이머 취소)
   useEffect(() => {
@@ -1933,12 +2031,24 @@ export default function AppWrapper() {
     logsStateRef.current = logs;
   }, [logs]);
 
-  // 로컬→클라우드 (inventory set 전체 저장)
+    // 로컬→클라우드 (inventory set 전체 저장)
   useEffect(() => {
+    // 0) 방금 들어온 클라우드 스냅샷을 로컬에 적용 중이면, 쓰기 금지 (에코 방지)
     if (applyingCloudRef.current.inv) {
       applyingCloudRef.current.inv = false;
       return;
     }
+
+    // 1) 🔒 첫 RTDB 스냅샷(inv)이 오기 전에는 "절대" 클라우드에 쓰지 않음
+    //    → 신규 기기가 구/빈 로컬 상태로 RTDB를 덮어쓰는 사고 방지
+    if (!bootRef.current.inv) {
+      const { inv: safeInv } = sanitizeInventoryKeys(inventory);
+      // 로컬 백업까지만 수행
+      saveLocalInventory(safeInv);
+      return;
+    }
+
+    // 2) 스냅샷을 최소 1번 받은 뒤에만 쓰기 진행
     const { inv: safeInv, bad } = sanitizeInventoryKeys(inventory);
     if (bad.length) {
       console.warn(
@@ -1974,6 +2084,7 @@ export default function AppWrapper() {
     };
   }, [isAdmin]);
 
+
   return (
     <>
       <Toaster
@@ -1991,6 +2102,13 @@ export default function AppWrapper() {
           error: { style: { background: "#160b12", color: "#ff7ba1" } },
         }}
       />
+     {/* ✅ 로그인 여부와 상관 없이, 부트가 끝나기 전엔 공통 오버레이 */}
+          {!bootSynced && (
+            <BootLoading
+              hint={isLoggedIn ? "실시간 동기화" : "초기화/동기화 준비"}
+              fallback={fallbackFired}
+            />
+          )}
       <Router>
         <Routes>
           {/* 로그인 안돼 있으면 /login 으로 보냄 */}

@@ -123,7 +123,7 @@
       (function(){
         /* 버전 표기 */
         try{
-          var v = localStorage.getItem('do-kkae-bi-app-version') || 'dev';
+          var v = localStorage.getItem('do-kkae-bi-app-version') || 'dev';f
           var el = document.getElementById('splash-ver'); if(el) el.textContent = v;
         }catch(e){}
       // 앱에서 최신 버전 브로드캐스트 시 즉시 반영
@@ -144,10 +144,18 @@
         }
         /* App.js 준비 완료 시: window.dispatchEvent(new Event('dokkaebi-ready')) 호출 */
         window.addEventListener('dokkaebi-ready', kill, { once:true });
-        /* 페이지 로드 폴백 */
-        window.addEventListener('load', function(){ setTimeout(kill, 0); });
-        /* 최후 폴백 */
-        setTimeout(kill, 9000);
+            /* 웜 부팅(최근에 동기화됨)일 땐 새로고침 시 짧게만 보여주고 자동 종료 */
+            try {
+              var last = +(localStorage.getItem('do-kkae-bi-last-sync-ts') || 0);
+              var STALE_MS = 5 * 60 * 1000;   // 최근 5분 이내면 웜 부팅으로 간주
+              var QUICK_MS = 350;             // 짧은 표시 후 종료
+              if (last && (Date.now() - last) < STALE_MS) {
+                window.addEventListener('load', function(){ setTimeout(kill, QUICK_MS); }, { once:true });
+              }
+            } catch(_) {}
+
+            /* 최후 폴백 (정말 이벤트가 안 올 때만) */
+            setTimeout(kill, 30000);
       })();
     </script>
   </body>

@@ -10,12 +10,17 @@ export default function LoginPage({ onLogin }) {
 
   const submit = (e) => {
     e.preventDefault();
+    // 학번 길이 검증 (정확히 9자)
+    if (uid.trim().length !== 9) {
+      alert("학번은 정확히 9자리여야 합니다.");
+      return;
+    }
     onLogin?.({ pw, uid: uid.trim(), name: name.trim() });
   };
 
   return (
     <div className="login-stage">
-      {/* 로고 배경(유지) */}
+      {/* 로고 배경 */}
       <div className="fixed-bg">
         <img
           src={`${process.env.PUBLIC_URL}/white.png`}
@@ -36,10 +41,11 @@ export default function LoginPage({ onLogin }) {
             <span className="dot dot-purple" />
             <span className="dot dot-blue" />
           </div>
-          <h1 className="brand-title">DOKKEBI<span className="thin">/</span>INVENTORY</h1>
+          <h1 className="brand-title">
+            DOKKEBI<span className="thin">/</span>INVENTORY
+          </h1>
           <b className="brand-sub">드론축구단 재고·입출고 관리 콘솔</b>
         </div>
-        
 
         <form onSubmit={submit} className="login-form">
           <label className="login-label">학번</label>
@@ -52,6 +58,11 @@ export default function LoginPage({ onLogin }) {
               placeholder="예: 202036099"
               autoComplete="username"
               required
+              maxLength={9}
+              minLength={9}
+              inputMode="numeric"
+              pattern="\d{9}"
+              title="학번은 숫자 9자리여야 합니다."
             />
           </div>
 
@@ -70,17 +81,17 @@ export default function LoginPage({ onLogin }) {
 
           <label className="login-label">비밀번호</label>
           <div className="login-input-row login-input-row--nowrap">
-            <input
-              className="login-input login-input--flex"
-              type={show ? "text" : "password"}
-              value={pw}
-              onChange={(e) => setPw(e.target.value)}
-              placeholder="••••"
-              autoFocus
-              autoComplete="current-password"
-              required
-            />
-            
+          <input
+            className="login-input login-input--flex"
+            type={show ? "text" : "password"}
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            placeholder="••••"
+            autoFocus
+            autoComplete="current-password"
+            inputMode="numeric"   // ✅ 추가
+            required
+          />
             <button
               type="button"
               className="btn btn-ghost login-eye-side"
@@ -91,12 +102,14 @@ export default function LoginPage({ onLogin }) {
               {show ? "🙈" : "👁️"}
             </button>
           </div>
-            <div
-              className={`brand-sub ${showHint ? "show" : ""}`}
-              onClick={() => setShowHint((v) => !v)}
-            >
-              {showHint ? "힌트: 동아리방 비밀번호" : "힌트 보기"}
-            </div>
+
+          <div
+            className={`brand-sub ${showHint ? "show" : ""}`}
+            onClick={() => setShowHint((v) => !v)}
+          >
+            {showHint ? "힌트: 동아리방 비밀번호" : "힌트 보기"}
+          </div>
+
           <button type="submit" className="btn btn-primary login-submit">
             🔑 로그인
           </button>

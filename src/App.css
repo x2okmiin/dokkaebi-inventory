@@ -881,3 +881,53 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
 .ver-chip:focus{ outline:2px solid #53ffe9; outline-offset:2px; }
 @media (max-width:480px){
   .ver-chip{ font-size:.78rem; }}
+  
+/* ===== Splash ===== */
+
+/* 기존 #app-splash 구조는 유지. 아래는 보조 텍스트만 */
+#app-splash .splash-sub {
+  margin-top: 8px;
+  font-size: 14px;
+  opacity: .9;
+}
+
+#app-splash .splash-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: .75;
+}
+
+#app-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: block;              /* 기본은 보이게 */
+  background: radial-gradient(1200px 800px at 50% 20%, rgba(83,255,233,0.10), rgba(0,0,0,0.85)),
+              #05070e;
+  color: #e6f7ff;
+  opacity: 1;
+  transition: opacity .35s ease, transform .35s ease;
+  will-change: opacity, transform;
+}
+#app-splash .splash-inner {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  gap: 16px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  text-align: center;
+}
+#app-splash .splash-logo { font-size: clamp(22px, 5vw, 36px); font-weight: 800; letter-spacing: .06em; }
+#app-splash .splash-sub  { opacity: .85; font-size: 14px; }
+#app-splash .splash-meta { opacity: .6;  font-size: 12px; }
+
+/* 닫힐 때만 사라짐 */
+#app-splash.hide {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+}
+
+/* 접근성: 모션 선호 안함일 때 전환 최소화 */
+@media (prefers-reduced-motion: reduce) {
+  #app-splash { transition: opacity .01s linear; }
+}
