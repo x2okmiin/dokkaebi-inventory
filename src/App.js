@@ -12,7 +12,7 @@
 // src/App.js  — 통합본 (중복/경고 제거, 새 기기 부트 게이트, 2×2 그리드 유지)
 
  import React, { useState, useEffect, useRef, useMemo } from "react";
- import { HashRouter as Router, Routes, Route, useNavigate, Navigate } from "react-router-dom";
+ import { HashRouter as Router, Routes, Route, useNavigate, Navigate, useLocation } from "react-router-dom";
  import * as XLSX from "xlsx";
  import "./App.css";
  
@@ -58,44 +58,42 @@ const GUIDE_STEP_COUNT = 6;
 function getGuideRuntime() {
   try {
     const raw = sessionStorage.getItem(GUIDE_RUNTIME_KEY);
-    if (!raw) {
-      return {
-        open: false,
-        step: 0,
-        engaged: false,
-        panelOpen: false,
-        pendingAction: "open-location-card",
-        stepStates: Array.from({ length: GUIDE_STEP_COUNT }, () => "idle"),
-      };
-    }
-    const parsed = JSON.parse(raw);
-    const safeStepStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => {
-      const v = parsed?.stepStates?.[idx];
-      return ["idle", "waiting-action", "done", "skipped"].includes(v) ? v : "idle";
-    });
-    return {
-      open: !!parsed?.open,
-      step: Number.isFinite(parsed?.step) ? Math.max(0, Math.min(5, parsed.step)) : 0,
-      engaged: !!parsed?.engaged,
-      panelOpen: !!parsed?.panelOpen,
-      pendingAction: parsed?.pendingAction || "open-location-card",
-      stepStates: safeStepStates,
-    };
+    if (!raw) return normalizeGuideRuntime({});
+    return normalizeGuideRuntime(JSON.parse(raw));
   } catch {
-    return {
-      open: false,
-      step: 0,
-      engaged: false,
-      panelOpen: false,
-      pendingAction: "open-location-card",
-      stepStates: Array.from({ length: GUIDE_STEP_COUNT }, () => "idle"),
-    };
+    return normalizeGuideRuntime({});
   }
+}
+
+function normalizeGuideRuntime(runtime = {}) {
+  const safeStepStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => {
+    const v = runtime?.stepStates?.[idx];
+    return ["idle", "waiting-action", "done", "skipped"].includes(v) ? v : "idle";
+  });
+  return {
+    open: !!runtime?.open,
+    step: Number.isFinite(runtime?.step) ? Math.max(0, Math.min(5, runtime.step)) : 0,
+    engaged: !!runtime?.engaged,
+    panelOpen: !!runtime?.panelOpen,
+    pendingAction: runtime?.pendingAction || "open-location-card",
+    stepStates: safeStepStates,
+    // step 1(로그 이동) 재실행 루프를 막기 위한 one-shot 제어 플래그들
+    suppressAutoActionOnce: !!runtime?.suppressAutoActionOnce,
+    pausedOnRoute: runtime?.pausedOnRoute || "",
+    guideTransitioningTo: runtime?.guideTransitioningTo || "",
+    sourceRoute: runtime?.sourceRoute || "/",
+    returnRoute: runtime?.returnRoute || "/",
+  };
 }
 
 function saveGuideRuntime(runtime) {
   try {
-    sessionStorage.setItem(GUIDE_RUNTIME_KEY, JSON.stringify(runtime));
+    const normalized = normalizeGuideRuntime(runtime);
+    const nextRaw = JSON.stringify(normalized);
+    const prevRaw = sessionStorage.getItem(GUIDE_RUNTIME_KEY);
+    if (prevRaw === nextRaw) return;
+    sessionStorage.setItem(GUIDE_RUNTIME_KEY, nextRaw);
+    window.dispatchEvent(new CustomEvent("dokkebi-guide-runtime-updated", { detail: normalized }));
   } catch {}
 }
 
@@ -441,6 +439,7 @@ function Home({
 }) {
   const resetAllRef = useRef(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const categoryRefs = useRef({});
   const cardRefs = useRef({});
   const [syncing, setSyncing] = useState(false);
@@ -488,7 +487,26 @@ function Home({
       todo: "로그 페이지에서 필터 토글 또는 내보내기를 한 번 실행하세요.",
       completeBy: "logs-filter-or-export",
       actionLabel: "기록 페이지로 이동",
-      action: () => navigate("/logs", { state: { guideStep: 1 } }),
+      action: () => {
+        // 중요: /logs 이동 전에 런타임을 먼저 확정 저장해야 LogsPage가 stale prop 없이 즉시 최신 가이드를 읽는다.
+        const preparedRuntime = normalizeGuideRuntime({
+          ...getGuideRuntime(),
+          open: true,
+          step: 1,
+          engaged: true,
+          pendingAction: "logs-filter-or-export",
+          panelOpen: true,
+          sourceRoute: "/",
+          returnRoute: "/",
+          guideTransitioningTo: "logs",
+          suppressAutoActionOnce: false,
+          pausedOnRoute: "",
+        });
+        const stepStates = [...preparedRuntime.stepStates];
+        if (stepStates[1] !== "done") stepStates[1] = "waiting-action";
+        saveGuideRuntime({ ...preparedRuntime, stepStates });
+        navigate("/logs", { state: { fromGuide: true, guideStep: 1, returnTo: "/" } });
+      },
     },
     {
       title: "3) 검색과 이동",
@@ -835,12 +853,11 @@ function Home({
     setSearchVisibleCount(20);
   }, [searchTerm]);
 
-  useEffect(() => {
-    const state = getOnboardingState();
-    const runtime = getGuideRuntime();
+  const applyRuntimeToHome = React.useCallback((state, rawRuntime) => {
+    const runtime = normalizeGuideRuntime(rawRuntime);
     setOnboardingMeta(state);
     setFirstForcedGuide(!state.seen);
-    setGuideStepStates(runtime.stepStates || Array.from({ length: GUIDE_STEP_COUNT }, () => "idle"));
+    setGuideStepStates(runtime.stepStates);
     setGuidePanelOpen(!!runtime.panelOpen);
     setGuidePendingAction(runtime.pendingAction || "open-location-card");
 
@@ -862,13 +879,45 @@ function Home({
   }, []);
 
   useEffect(() => {
-    if (!guidedTutorialOpen) return;
-    const target = GUIDE_STEPS[guidedStep];
-    if (target?.action) target.action();
-  }, [guidedTutorialOpen, guidedStep, GUIDE_STEPS]);
+    applyRuntimeToHome(getOnboardingState(), getGuideRuntime());
+    const onGuideRuntimeUpdated = () => applyRuntimeToHome(getOnboardingState(), getGuideRuntime());
+    window.addEventListener("dokkebi-guide-runtime-updated", onGuideRuntimeUpdated);
+    return () => window.removeEventListener("dokkebi-guide-runtime-updated", onGuideRuntimeUpdated);
+  }, [applyRuntimeToHome]);
 
   useEffect(() => {
+    if (!guidedTutorialOpen) return;
+    const currentRuntime = getGuideRuntime();
+    // 핵심 규칙: Home 복귀 시에는 가이드를 이어서 보여주되 step action 자동 재실행(= /logs 강제 점프)은 1회 차단한다.
+    if (currentRuntime.suppressAutoActionOnce) {
+      saveGuideRuntime({ ...currentRuntime, suppressAutoActionOnce: false, guideTransitioningTo: "" });
+      return;
+    }
+    const target = GUIDE_STEPS[guidedStep];
+    if (target?.action) target.action();
+  }, [guidedTutorialOpen, guidedStep, GUIDE_STEPS, location.key]);
+
+  useEffect(() => {
+    // 앱 내 back/브라우저 back으로 Logs에서 복귀한 경우를 location.state로도 감지해 자동 점프를 차단한다.
+    if (location?.state?.fromLogsGuideBack) {
+      const runtime = getGuideRuntime();
+      saveGuideRuntime({
+        ...runtime,
+        open: true,
+        step: 1,
+        engaged: true,
+        pendingAction: "logs-filter-or-export",
+        suppressAutoActionOnce: true,
+        pausedOnRoute: "logs",
+        guideTransitioningTo: "",
+      });
+    }
+  }, [location]);
+
+  useEffect(() => {
+    const prev = getGuideRuntime();
     saveGuideRuntime({
+      ...prev,
       open: guidedTutorialOpen,
       step: guidedStep,
       engaged: guideEngaged,
@@ -2068,9 +2117,10 @@ function Home({
 /* =========================
    6) 기록 페이지
    ========================= */
-function LogsPage({ logs, setLogs, onboardingRuntime }) {
+function LogsPage({ logs, setLogs }) {
   const [syncing, setSyncing] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const [filterDate, setFilterDate] = useState("");
   const [dateFocused, setDateFocused] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -2083,17 +2133,52 @@ function LogsPage({ logs, setLogs, onboardingRuntime }) {
   const menuRef = useRef(null);
 
   const onboardingState = getOnboardingState();
-  const logsGuideOpen = !!onboardingRuntime?.open && onboardingRuntime?.step === 1;
+  const [runtime, setRuntime] = useState(() => normalizeGuideRuntime(getGuideRuntime()));
+  const persistRuntime = React.useCallback((updater) => {
+    setRuntime((prev) => {
+      const candidate = typeof updater === "function" ? updater(prev) : updater;
+      const next = normalizeGuideRuntime(candidate);
+      saveGuideRuntime(next);
+      return next;
+    });
+  }, []);
+  const logsGuideOpen = !!runtime?.open && runtime?.step === 1;
   const firstForcedGuideInLogs = !onboardingState.seen;
+
+  useEffect(() => {
+    // Logs는 Router prop snapshot 대신 session runtime을 직접 구독해 stale guide 상태를 피한다.
+    const reloadRuntime = () => setRuntime(normalizeGuideRuntime(getGuideRuntime()));
+    reloadRuntime();
+    window.addEventListener("dokkebi-guide-runtime-updated", reloadRuntime);
+    return () => window.removeEventListener("dokkebi-guide-runtime-updated", reloadRuntime);
+  }, []);
+
+  useEffect(() => {
+    // guide에 의해 진입한 경우(또는 step 1 runtime) 팝업을 강제로 보장한다.
+    if (location?.state?.fromGuide || (runtime.open && runtime.step === 1)) {
+      persistRuntime((prev) => ({
+        ...prev,
+        open: true,
+        step: 1,
+        engaged: true,
+        pendingAction: "logs-filter-or-export",
+        guideTransitioningTo: "",
+        sourceRoute: prev?.sourceRoute || "/",
+        returnRoute: prev?.returnRoute || "/",
+      }));
+      setUserFilterExpanded(true);
+      setAutoCollapsed(false);
+    }
+  }, [location?.state, runtime.open, runtime.step, persistRuntime]);
 
   const isMobileLike = () => window.matchMedia("(max-width: 1100px)").matches;
 
   // 가이드 2단계(로그 페이지 핵심) 진입 시 필터를 자동으로 펼쳐 체험 끊김을 줄입니다.
   useEffect(() => {
-    if (!onboardingRuntime?.open || onboardingRuntime?.step !== 1) return;
+    if (!runtime?.open || runtime?.step !== 1) return;
     setUserFilterExpanded(true);
     setAutoCollapsed(false);
-  }, [onboardingRuntime]);
+  }, [runtime]);
 
   useEffect(() => saveLocalLogs(logs), [logs]);
 
@@ -2183,10 +2268,10 @@ function LogsPage({ logs, setLogs, onboardingRuntime }) {
       return next;
     });
 
-    if (onboardingRuntime?.open && onboardingRuntime?.step === 1) {
-      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => onboardingRuntime?.stepStates?.[idx] || "idle");
+    if (runtime?.open && runtime?.step === 1) {
+      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => runtime?.stepStates?.[idx] || "idle");
       safeStates[1] = "done";
-      saveGuideRuntime({ ...onboardingRuntime, stepStates: safeStates, pendingAction: "" });
+      persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "" }));
       toast.success("[가이드] 로그 필터 조작을 확인했어요.");
     }
   };
@@ -2246,6 +2331,41 @@ function LogsPage({ logs, setLogs, onboardingRuntime }) {
     a.download = "기록.csv";
     a.click();
   }
+  const handleGuideAwareBack = React.useCallback((cause = "in-app") => {
+    if (runtime?.open && runtime?.step === 1) {
+      // Logs step1에서 홈으로 복귀할 때는 '일시중단 상태 + auto action 1회 억제'를 먼저 저장해 라우팅 루프를 차단한다.
+      persistRuntime((prev) => ({
+        ...prev,
+        open: true,
+        step: 1,
+        engaged: true,
+        pendingAction: "logs-filter-or-export",
+        pausedOnRoute: "logs",
+        suppressAutoActionOnce: true,
+        guideTransitioningTo: "home",
+      }));
+      navigate("/", { state: { fromLogsGuideBack: true, cause } });
+      return;
+    }
+    navigate(-1);
+  }, [runtime, persistRuntime, navigate]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const current = getGuideRuntime();
+      if (current.open && current.step === 1) {
+        saveGuideRuntime({
+          ...current,
+          pausedOnRoute: "logs",
+          suppressAutoActionOnce: true,
+          guideTransitioningTo: "home",
+        });
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
   function exportExcel() {
     const data = filteredList.map((l) => ({
       시간: l.time,
@@ -2270,7 +2390,7 @@ function LogsPage({ logs, setLogs, onboardingRuntime }) {
       <NeonBackdrop />
 
       <header className="topbar glass">
-        <button className="btn btn-ghost" onClick={() => navigate("/")}>
+        <button className="btn btn-ghost" onClick={() => handleGuideAwareBack("in-app")}>
           ← 돌아가기
         </button>
         <h1 className="logo">📘입출고 기록</h1>
@@ -2341,10 +2461,10 @@ function LogsPage({ logs, setLogs, onboardingRuntime }) {
                   onClick={() => {
                     exportCSV();
                     setExportOpen(false);
-                    if (onboardingRuntime?.open && onboardingRuntime?.step === 1) {
-                      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => onboardingRuntime?.stepStates?.[idx] || "idle");
+                    if (runtime?.open && runtime?.step === 1) {
+                      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => runtime?.stepStates?.[idx] || "idle");
                       safeStates[1] = "done";
-                      saveGuideRuntime({ ...onboardingRuntime, stepStates: safeStates, pendingAction: "" });
+                      persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "" }));
                     }
                   }}
                 >
@@ -2355,10 +2475,10 @@ function LogsPage({ logs, setLogs, onboardingRuntime }) {
                   onClick={() => {
                     exportExcel();
                     setExportOpen(false);
-                    if (onboardingRuntime?.open && onboardingRuntime?.step === 1) {
-                      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => onboardingRuntime?.stepStates?.[idx] || "idle");
+                    if (runtime?.open && runtime?.step === 1) {
+                      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => runtime?.stepStates?.[idx] || "idle");
                       safeStates[1] = "done";
-                      saveGuideRuntime({ ...onboardingRuntime, stepStates: safeStates, pendingAction: "" });
+                      persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "" }));
                     }
                   }}
                 >
@@ -2439,18 +2559,18 @@ function LogsPage({ logs, setLogs, onboardingRuntime }) {
             <button
               className="btn btn-primary"
               onClick={() => {
-                if (onboardingRuntime?.stepStates?.[1] !== "done") {
+                if (runtime?.stepStates?.[1] !== "done") {
                   toast("필터 토글 또는 내보내기를 먼저 1회 실행해 주세요.");
                   return;
                 }
-                saveGuideRuntime({ ...onboardingRuntime, open: true, step: 2, engaged: true, pendingAction: "search-result-click" });
+                persistRuntime((prev) => ({ ...prev, open: true, step: 2, engaged: true, pendingAction: "search-result-click", suppressAutoActionOnce: false, pausedOnRoute: "", guideTransitioningTo: "home" }));
                 navigate("/");
               }}
             >
               다음 단계
             </button>
-            {(!firstForcedGuideInLogs || onboardingRuntime?.engaged) && (
-              <button className="btn btn-ghost" onClick={() => { saveGuideRuntime({ ...onboardingRuntime, open: false, step: 1, engaged: onboardingRuntime?.engaged }); }}>
+            {(!firstForcedGuideInLogs || runtime?.engaged) && (
+              <button className="btn btn-ghost" onClick={() => { persistRuntime((prev) => ({ ...prev, open: false, step: 1, engaged: prev?.engaged })); }}>
                 닫기
               </button>
             )}
@@ -2757,7 +2877,7 @@ export default function AppWrapper() {
 
           <Route
             path="/logs"
-            element={isLoggedIn ? <LogsPage logs={logs} setLogs={setLogs} onboardingRuntime={getGuideRuntime()} /> : <Navigate to="/login" replace />}
+            element={isLoggedIn ? <LogsPage logs={logs} setLogs={setLogs} /> : <Navigate to="/login" replace />}
           />
 
           {/* 이미 로그인돼 있으면 / 로 되돌림 */}

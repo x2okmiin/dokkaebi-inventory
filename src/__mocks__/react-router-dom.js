@@ -7,4 +7,5 @@ module.exports = {
   Route: ({ element }) => element,
   Navigate: ({ to }) => `navigate:${to}`,
   useNavigate: () => () => {},
+  useLocation: () => ({ pathname: "/", state: null, key: "test" }),
 };
