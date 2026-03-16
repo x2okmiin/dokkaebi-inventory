@@ -1,17 +1,17 @@
 {
   "files": {
-    "main.css": "/dokkaebi-inventory/static/css/main.5faf9aa9.css",
-    "main.js": "/dokkaebi-inventory/static/js/main.4bae2393.js",
+    "main.css": "/dokkaebi-inventory/static/css/main.3b9f6a27.css",
+    "main.js": "/dokkaebi-inventory/static/js/main.713dbaf9.js",
     "static/js/453.a8a442b9.chunk.js": "/dokkaebi-inventory/static/js/453.a8a442b9.chunk.js",
     "static/media/GANGWONSTATE-SemiBold.ttf": "/dokkaebi-inventory/static/media/GANGWONSTATE-SemiBold.3ed30dc3a69763f1ae1c.ttf",
     "static/media/GANGWONSTATE-SemiBold.otf": "/dokkaebi-inventory/static/media/GANGWONSTATE-SemiBold.6e973697bb171684dfd2.otf",
     "index.html": "/dokkaebi-inventory/index.html",
-    "main.5faf9aa9.css.map": "/dokkaebi-inventory/static/css/main.5faf9aa9.css.map",
-    "main.4bae2393.js.map": "/dokkaebi-inventory/static/js/main.4bae2393.js.map",
+    "main.3b9f6a27.css.map": "/dokkaebi-inventory/static/css/main.3b9f6a27.css.map",
+    "main.713dbaf9.js.map": "/dokkaebi-inventory/static/js/main.713dbaf9.js.map",
     "453.a8a442b9.chunk.js.map": "/dokkaebi-inventory/static/js/453.a8a442b9.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.5faf9aa9.css",
-    "static/js/main.4bae2393.js"
+    "static/css/main.3b9f6a27.css",
+    "static/js/main.713dbaf9.js"
   ]
 }
