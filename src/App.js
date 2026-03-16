@@ -123,6 +123,7 @@ function getOnboardingState() {
   }
 }
 
+function markOnboardingSeen(status = "completed", completedSteps = []) {
   const blockAutoStart = status === "skipped";
   try {
     localStorage.setItem(
@@ -132,14 +133,13 @@ function getOnboardingState() {
         status,
         ts: new Date().toISOString(),
         completedSteps,
-        // 스킵은 "자동 재등장 금지" 의미를 분명히 남긴다.
-        // beta.6 이후 상태 확장 시에도 이 플래그를 기준으로 자동 시작 여부를 판정한다.
         autoStartBlocked: blockAutoStart,
         dismissedUntilManualReopen: blockAutoStart,
         version: GUIDE_VERSION,
       })
     );
   } catch {}
+}
 
 function markOnboardingReopened() {
   try {
