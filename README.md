@@ -167,7 +167,7 @@ npm run ud -- 1.6.0 "chore(release): v1.6.0"
 
 * **Firebase set 실패**: 빈키/금지문자 존재 → 저장 직전 살균
 * **ESLint no-useless-escape**: 정규식 `const FORBIDDEN_KEY_RE = /[.#$/[\]]/;` 유지
-* **모바일 스크롤/버튼 미표시**: `.card-body{overflow:auto}` 확인
+* **모바일 스크롤/버튼 미표시**: `@media (max-width:960px)`에서 `.summary-grid .card-body{overflow:visible}` 오버라이드가 살아있는지 확인
 * **팝업 접힘**: `requestAnimationFrame`으로 열자마자 `details.open=true` 강제
 * **스플래시 미닫힘**: RTDB 지연 시 8초 후 강제 닫힘
 
@@ -192,6 +192,14 @@ npm run ud -- 1.6.0 "chore(release): v1.6.0"
 ---
 
 ## 변경 이력
+
+**2026-03-16 · v1.6.0-beta.3**
+
+* 체험형 가이드 상태를 런타임(sessionStorage)과 완료 상태(localStorage)로 분리해 해시 라우팅 전환 시 단계 씹힘/초기화 문제를 보정
+* 첫 강제 진입 규칙 정리: 처음에는 닫기 숨김, 사용자가 실제 체험 시작 후 닫기 허용, 닫기 가능 상태에서는 스킵 비활성화
+* 로그 페이지에서도 2단계 가이드 코치가 이어지도록 연결해 페이지 이동 중 하단 가이드 팝업 단절 해소
+* 모바일/태블릿 로그 필터 접힘 로직 보강(스크롤 자동 축소 + 수동 토글/회전/리사이즈 충돌 완화)
+* .welcome.sh를 인수인계 중심 운영 가이드로 확장하고 점검 키(local/session storage) 안내를 명시
 
 **2026-03-14 · v1.6.0-beta.2**
 

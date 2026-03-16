@@ -41,7 +41,45 @@ const APP_BUILD_INFO =
   localStorage.getItem("do-kkae-bi-build-info") ||
   "local";
 const ADMIN_PASSWORD = "2513";
-const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.2";
+const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.3";
+const GUIDE_RUNTIME_KEY = "do-kkae-bi-onboarding-runtime-v1";
+
+/**
+ * 체험형 가이드 '진행 중 상태'를 라우팅 이동 간 유지하기 위한 런타임 저장소.
+ * - 왜 필요한가?
+ *   Home -> Logs 같은 해시 라우팅 전환 시 Home 컴포넌트가 언마운트되면서
+ *   guidedStep/open 상태가 초기화되는 문제(가이드 씹힘)를 방지하기 위함.
+ * - 주의사항:
+ *   이 값은 "영구 완료 여부"(GUIDE_STORAGE_KEY)와 분리한다.
+ *   완료/스킵 여부는 GUIDE_STORAGE_KEY, 진행 중 임시 상태는 GUIDE_RUNTIME_KEY.
+ */
+function getGuideRuntime() {
+  try {
+    const raw = sessionStorage.getItem(GUIDE_RUNTIME_KEY);
+    if (!raw) return { open: false, step: 0, engaged: false };
+    const parsed = JSON.parse(raw);
+    return {
+      open: !!parsed?.open,
+      step: Number.isFinite(parsed?.step) ? Math.max(0, Math.min(5, parsed.step)) : 0,
+      engaged: !!parsed?.engaged,
+    };
+  } catch {
+    return { open: false, step: 0, engaged: false };
+  }
+}
+
+function saveGuideRuntime(runtime) {
+  try {
+    sessionStorage.setItem(GUIDE_RUNTIME_KEY, JSON.stringify(runtime));
+  } catch {}
+}
+
+function clearGuideRuntime() {
+  try {
+    sessionStorage.removeItem(GUIDE_RUNTIME_KEY);
+  } catch {}
+}
+
 
 function getOnboardingState() {
   try {
@@ -67,8 +105,7 @@ function markOnboardingSeen(status = "completed") {
         seen: true,
         status,
         ts: new Date().toISOString(),
-        version: "1.6.0-beta.1",
-        version: "1.6.0-beta.2",
+        version: "1.6.0-beta.3",
       })
     );
   } catch {}
@@ -84,7 +121,7 @@ function markOnboardingReopened() {
         seen: true,
         status: prev.status || "completed",
         reopenedAt: new Date().toISOString(),
-        version: "1.6.0-beta.2",
+        version: "1.6.0-beta.3",
       })
     );
   } catch {}
@@ -395,6 +432,10 @@ function Home({
   const [tutorialStep, setTutorialStep] = useState(0);
   const [guidedTutorialOpen, setGuidedTutorialOpen] = useState(false);
   const [guidedStep, setGuidedStep] = useState(0);
+  // firstForcedGuide: 기기 첫 진입 강제 가이드 여부(닫기 버튼 노출 규칙 제어)
+  const [firstForcedGuide, setFirstForcedGuide] = useState(false);
+  // guideEngaged: 사용자가 "체험 시작" 또는 단계 선택으로 흐름에 실제 진입했는지 여부
+  const [guideEngaged, setGuideEngaged] = useState(false);
   const [onboardingMeta, setOnboardingMeta] = useState(() => getOnboardingState());
   const dataMenuButtonRef = useRef(null);
   const importMenuItemRef = useRef(null);
@@ -403,12 +444,45 @@ function Home({
 
   // 온보딩 단계별 자동 이동 타겟(메인/로그/데이터 메뉴)
   const GUIDE_STEPS = useMemo(() => [
-    { title: "1) 재고 관리 구조", desc: "장소 카드와 하위 카테고리 확장 흐름을 직접 확인합니다.", actionLabel: "장소 카드로 이동", action: () => cardRefs.current[locations[0]]?.scrollIntoView({ behavior: "smooth", block: "start" }) },
-    { title: "2) 로그 페이지 핵심", desc: "기록 페이지로 이동해 필터/내보내기 핵심 UI를 직접 확인합니다.", actionLabel: "기록 페이지로 이동", action: () => navigate("/logs") },
-    { title: "3) 검색과 이동", desc: "상단 검색창 위치로 자동 이동해 검색-이동 흐름을 체험합니다.", actionLabel: "검색창으로 이동", action: () => searchInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }) },
-    { title: "4) 권한 / 자동 로그아웃", desc: "관리자 버튼 노출 조건과 10분 무활동 자동 로그아웃 정책을 확인합니다.", actionLabel: "권한 영역 보기", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
-    { title: "5) 일괄 추가와 백업", desc: "데이터 메뉴를 열고 일괄 추가/백업 복구 위치를 순서대로 확인합니다.", actionLabel: "데이터 메뉴 열기", action: () => { dataMenuButtonRef.current?.click(); dataMenuButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); } },
-    { title: "6) 마지막 운영 체크포인트", desc: "운영 중 회귀 점검 항목을 확인하고 온보딩을 완료합니다.", actionLabel: "운영 체크포인트 확인", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
+    {
+      title: "1) 재고 관리 구조",
+      desc: "장소 카드와 하위 카테고리 확장 흐름을 직접 확인합니다.",
+      actionLabel: "장소 카드로 이동",
+      action: () => cardRefs.current[locations[0]]?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    },
+    {
+      title: "2) 로그 페이지 핵심",
+      desc: "기록 페이지로 이동해 필터/내보내기 핵심 UI를 직접 확인합니다.",
+      actionLabel: "기록 페이지로 이동",
+      action: () => navigate("/logs", { state: { guideStep: 1 } }),
+    },
+    {
+      title: "3) 검색과 이동",
+      desc: "상단 검색창 위치로 자동 이동해 검색-이동 흐름을 체험합니다.",
+      actionLabel: "검색창으로 이동",
+      action: () => searchInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }),
+    },
+    {
+      title: "4) 권한 / 자동 로그아웃",
+      desc: "관리자 버튼 노출 조건과 10분 무활동 자동 로그아웃 정책을 확인합니다.",
+      actionLabel: "권한 영역 보기",
+      action: () => window.scrollTo({ top: 0, behavior: "smooth" }),
+    },
+    {
+      title: "5) 일괄 추가와 백업",
+      desc: "데이터 메뉴를 열고 일괄 추가/백업 복구 위치를 순서대로 확인합니다.",
+      actionLabel: "데이터 메뉴 열기",
+      action: () => {
+        dataMenuButtonRef.current?.click();
+        dataMenuButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      },
+    },
+    {
+      title: "6) 마지막 운영 체크포인트",
+      desc: "운영 중 회귀 점검 항목을 확인하고 온보딩을 완료합니다.",
+      actionLabel: "운영 체크포인트 확인",
+      action: () => window.scrollTo({ top: 0, behavior: "smooth" }),
+    },
   ], [navigate]);
 
 
@@ -539,7 +613,8 @@ function Home({
   function beginGuidedTutorial() {
     setTutorialOpen(false);
     setGuidedTutorialOpen(true);
-    setGuidedStep(0);
+    setGuideEngaged(true);
+    setGuidedStep((prev) => prev || 0);
     setDataMenuOpen(false);
     setTimeout(() => GUIDE_STEPS[0]?.action?.(), 120);
   }
@@ -551,10 +626,13 @@ function Home({
   }
 
   function skipUnifiedGuide() {
+    if (firstForcedGuide && guideEngaged) return;
     markOnboardingSeen("skipped");
+    clearGuideRuntime();
     setOnboardingMeta(getOnboardingState());
     setTutorialOpen(false);
     setGuidedTutorialOpen(false);
+    setGuideEngaged(false);
     setDataMenuOpen(false);
     toast("가이드는 건너뛰었어요. 상단 '🧭 가이드' 버튼에서 언제든 다시 볼 수 있습니다.");
   }
@@ -563,7 +641,9 @@ function Home({
     setGuidedStep((cur) => {
       if (cur >= GUIDE_STEPS.length - 1) {
         setGuidedTutorialOpen(false);
+        setGuideEngaged(false);
         setDataMenuOpen(false);
+        clearGuideRuntime();
         markOnboardingSeen("completed");
         setOnboardingMeta(getOnboardingState());
         toast.success("체험형 온보딩 완료! 이제 운영 흐름대로 바로 사용할 수 있어요.");
@@ -683,10 +763,23 @@ function Home({
 
   useEffect(() => {
     const state = getOnboardingState();
+    const runtime = getGuideRuntime();
     setOnboardingMeta(state);
+    setFirstForcedGuide(!state.seen);
+
     if (!state.seen) {
       setTutorialOpen(true);
-      setTutorialStep(0);
+      setTutorialStep(runtime.step || 0);
+      setGuidedTutorialOpen(!!runtime.open);
+      setGuidedStep(runtime.step || 0);
+      setGuideEngaged(!!runtime.engaged);
+      return;
+    }
+
+    if (runtime.open) {
+      setGuidedTutorialOpen(true);
+      setGuidedStep(runtime.step || 0);
+      setGuideEngaged(!!runtime.engaged);
     }
   }, []);
 
@@ -695,6 +788,10 @@ function Home({
     const target = GUIDE_STEPS[guidedStep];
     if (target?.action) target.action();
   }, [guidedTutorialOpen, guidedStep, GUIDE_STEPS]);
+
+  useEffect(() => {
+    saveGuideRuntime({ open: guidedTutorialOpen, step: guidedStep, engaged: guideEngaged });
+  }, [guidedTutorialOpen, guidedStep, guideEngaged]);
 
   // 동기화 인디케이터
   useEffect(() => {
@@ -1577,7 +1674,7 @@ function Home({
           <button ref={logsNavButtonRef} className="btn btn-secondary" onClick={() => navigate("/logs")}>
             📘 기록
           </button>
-          <button className="btn btn-ghost" onClick={() => { markOnboardingReopened(); setOnboardingMeta(getOnboardingState()); setTutorialOpen(true); setTutorialStep(0); }}>
+          <button className="btn btn-ghost" onClick={() => { markOnboardingReopened(); setOnboardingMeta(getOnboardingState()); setFirstForcedGuide(false); setGuideEngaged(false); setTutorialOpen(true); setTutorialStep(0); }}>
             🧭 가이드 {onboardingMeta.seen ? (onboardingMeta.status === "completed" ? "(완료)" : "(스킵됨)") : "(필수 1회)"}
           </button>
 
@@ -1740,8 +1837,10 @@ function Home({
         <div className="overlay" onClick={() => setTutorialOpen(false)}>
           <div className="popup glass neon-rise tutorial-popup" onClick={(e) => e.stopPropagation()}>
             <div className="popup-head">
-              <h3 className="popup-title">v1.6.0-beta.2 체험형 온보딩</h3>
-              <button className="btn btn-ghost" onClick={() => setTutorialOpen(false)}>닫기</button>
+              <h3 className="popup-title">v1.6.0-beta.3 체험형 온보딩</h3>
+              {(!firstForcedGuide || guideEngaged) && (
+                <button className="btn btn-ghost" onClick={() => setTutorialOpen(false)}>닫기</button>
+              )}
             </div>
             <div className="popup-body">
               {GUIDE_STEPS.map((step, idx) => (
@@ -1751,6 +1850,7 @@ function Home({
                   className={`tutorial-step ${tutorialStep === idx ? "is-active" : ""}`}
                   onClick={() => {
                     setTutorialStep(idx);
+                    setGuideEngaged(true);
                     runGuideAction(idx);
                   }}
                 >
@@ -1773,7 +1873,7 @@ function Home({
                   <button className="btn btn-secondary" type="button" onClick={beginGuidedTutorial}>
                     🎮 기능 버튼 직접 체험 시작
                   </button>
-                  <button className="btn btn-ghost" type="button" onClick={skipUnifiedGuide}>
+                  <button className="btn btn-ghost" type="button" onClick={skipUnifiedGuide} disabled={!(!firstForcedGuide || !guideEngaged)}>
                     이번만 스킵
                   </button>
                 </div>
@@ -1802,9 +1902,11 @@ function Home({
             <button className="btn btn-primary" onClick={nextGuidedStep}>
               {guidedStep >= GUIDE_STEPS.length - 1 ? "체험 완료" : "다음 단계"}
             </button>
-            <button className="btn btn-ghost" onClick={() => setGuidedTutorialOpen(false)}>
-              나중에
-            </button>
+            {(!firstForcedGuide || guideEngaged) && (
+              <button className="btn btn-ghost" onClick={() => setGuidedTutorialOpen(false)}>
+                닫기
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1826,7 +1928,7 @@ function Home({
 /* =========================
    6) 기록 페이지
    ========================= */
-function LogsPage({ logs, setLogs }) {
+function LogsPage({ logs, setLogs, onboardingRuntime }) {
   const [syncing, setSyncing] = useState(false);
   const navigate = useNavigate();
   const [filterDate, setFilterDate] = useState("");
@@ -1838,6 +1940,19 @@ function LogsPage({ logs, setLogs }) {
   const [mobileFilterCollapsed, setMobileFilterCollapsed] = useState(false);
   const [filterExpanded, setFilterExpanded] = useState(true);
   const menuRef = useRef(null);
+
+  const onboardingState = getOnboardingState();
+  const logsGuideOpen = !!onboardingRuntime?.open && onboardingRuntime?.step === 1;
+  const firstForcedGuideInLogs = !onboardingState.seen;
+
+  const isMobileLike = () => window.matchMedia("(max-width: 1100px)").matches;
+
+  // 가이드 2단계(로그 페이지 핵심) 진입 시 필터를 자동으로 펼쳐 체험 끊김을 줄입니다.
+  useEffect(() => {
+    if (!onboardingRuntime?.open || onboardingRuntime?.step !== 1) return;
+    setFilterExpanded(true);
+    setMobileFilterCollapsed(false);
+  }, [onboardingRuntime]);
 
   useEffect(() => saveLocalLogs(logs), [logs]);
 
@@ -1877,25 +1992,52 @@ function LogsPage({ logs, setLogs }) {
   }, [filterDate, itemKeyword, locationFilter, logs]);
 
   useEffect(() => {
-    const isMobile = window.matchMedia("(max-width: 960px)").matches;
-    if (!isMobile) return;
+    if (!isMobileLike()) {
+      setMobileFilterCollapsed(false);
+      setFilterExpanded(true);
+      return;
+    }
+
     let lastTop = window.scrollY || 0;
+    let userManualCollapsed = false;
     const onScroll = () => {
       const top = window.scrollY || 0;
-      const down = top > lastTop + 10;
-      const up = top < lastTop - 10;
-      if (down && top > 120) {
+      const down = top > lastTop + 12;
+      const up = top < lastTop - 12;
+
+      if (down && top > 140 && !userManualCollapsed) {
         setMobileFilterCollapsed(true);
         setFilterExpanded(false);
       }
-      if (up || top < 80) {
+      if (up || top < 70) {
         setMobileFilterCollapsed(false);
       }
       lastTop = top;
     };
+
+    const onResize = () => {
+      if (!isMobileLike()) {
+        setMobileFilterCollapsed(false);
+        setFilterExpanded(true);
+      }
+    };
+
+    const onManualToggle = () => {
+      userManualCollapsed = !filterExpanded;
+    };
+
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [dates.length]);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    window.addEventListener("dokkebi-filter-manual-toggle", onManualToggle);
+
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+      window.removeEventListener("dokkebi-filter-manual-toggle", onManualToggle);
+    };
+  }, [dates.length, filterExpanded]);
 
   function formatLabel(d) {
     const diff = Math.floor((new Date() - new Date(d)) / (1000 * 60 * 60 * 24));
@@ -1985,7 +2127,10 @@ function LogsPage({ logs, setLogs }) {
         <div className={`toolbar toolbar-logs ${mobileFilterCollapsed ? "toolbar-collapsed" : ""} ${filterExpanded ? "toolbar-expanded" : ""}`}>
           <button
             className="btn btn-ghost toolbar-toggle"
-            onClick={() => setFilterExpanded((v) => !v)}
+            onClick={() => {
+              setFilterExpanded((v) => !v);
+              window.dispatchEvent(new Event("dokkebi-filter-manual-toggle"));
+            }}
             aria-expanded={filterExpanded}
           >
             {filterExpanded ? "필터 접기 ▲" : "필터 펼치기 ▼"}
@@ -2122,6 +2267,33 @@ function LogsPage({ logs, setLogs }) {
             </section>
           )}
         </>
+      )}
+
+      {logsGuideOpen && (
+        <div className="guided-coach" role="status" aria-live="polite">
+          <div className="guided-coach-title">🎯 실전 체험 가이드 2/6</div>
+          <p><strong>2) 로그 페이지 핵심</strong></p>
+          <p>필터/내보내기 UI를 직접 확인한 뒤 다음 단계로 진행해 주세요.</p>
+          <div className="tutorial-actions">
+            <button className="btn btn-secondary" onClick={() => { setFilterExpanded(true); setMobileFilterCollapsed(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+              필터 위치 확인
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                saveGuideRuntime({ open: true, step: 2, engaged: true });
+                navigate("/");
+              }}
+            >
+              다음 단계
+            </button>
+            {(!firstForcedGuideInLogs || onboardingRuntime?.engaged) && (
+              <button className="btn btn-ghost" onClick={() => { saveGuideRuntime({ open: false, step: 1, engaged: onboardingRuntime?.engaged }); }}>
+                닫기
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </main>
   );
@@ -2376,7 +2548,7 @@ export default function AppWrapper() {
     <>
       <Toaster
         containerClassName="app-toaster"
-        position={typeof window !== "undefined" && window.matchMedia("(max-width: 720px)").matches ? "top-center" : "bottom-right"}
+        position={typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 720px)").matches ? "top-center" : "bottom-right"}
         toastOptions={{
           style: {
             background: "#0b1020",
@@ -2423,7 +2595,7 @@ export default function AppWrapper() {
 
           <Route
             path="/logs"
-            element={isLoggedIn ? <LogsPage logs={logs} setLogs={setLogs} /> : <Navigate to="/login" replace />}
+            element={isLoggedIn ? <LogsPage logs={logs} setLogs={setLogs} onboardingRuntime={getGuideRuntime()} /> : <Navigate to="/login" replace />}
           />
 
           {/* 이미 로그인돼 있으면 / 로 되돌림 */}
