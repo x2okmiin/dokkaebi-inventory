@@ -143,6 +143,19 @@ function clearGuideRuntime() {
   } catch {}
 }
 
+function isSameRuntime(a, b) {
+  return JSON.stringify(normalizeGuideRuntime(a)) === JSON.stringify(normalizeGuideRuntime(b));
+}
+
+function GuideFloatingDock({ guideOpen, checklistOpen = false, checklistSlot = null, coachSlot = null }) {
+  if (!guideOpen && !checklistOpen) return null;
+  return (
+    <div className={`guide-floating-dock ${guideOpen ? "guide-open" : ""} ${checklistOpen ? "checklist-open" : ""}`}>
+      {checklistOpen && checklistSlot}
+      {guideOpen && coachSlot}
+    </div>
+  );
+}
 
 function getOnboardingState() {
   try {
@@ -728,6 +741,7 @@ function Home({
     guideOpen: guidedTutorialOpen,
     checklistOpen: shouldRenderChecklist,
   }), [guidedTutorialOpen, shouldRenderChecklist]);
+  const guideHighlightTarget = guidedTutorialOpen ? guidePendingAction : "";
 
   function setGuideStepState(step, state) {
     setGuideStepStates((prev) => {
@@ -949,7 +963,7 @@ function Home({
     setGuidePendingAction(runtime.pendingAction || "open-location-card");
 
     if (!state.seen) {
-      setTutorialOpen(true);
+      setTutorialOpen(!runtime.open);
       setGuideHubUnlocked(!!runtime.engaged);
       setGuidedTutorialOpen(!!runtime.open);
       setGuidedStep(runtime.step || 0);
@@ -977,6 +991,7 @@ function Home({
     }
 
     if (runtime.open) {
+      setTutorialOpen(false);
       setGuidedTutorialOpen(true);
       setGuidedStep(runtime.step || 0);
       setGuideEngaged(!!runtime.engaged);
@@ -1858,7 +1873,7 @@ function Home({
           <div className="menu-wrap" ref={dataMenuRef}>
             <button
               ref={dataMenuButtonRef}
-              className={`btn btn-secondary ${guidedTutorialOpen && guidedStep === 0 ? "tutorial-target-pulse" : ""}`}
+              className={`btn btn-secondary ${guideHighlightTarget === "open-data-menu" ? "guide-highlight-target" : ""}`}
               onClick={() => {
                 setDataMenuOpen((v) => !v);
                 if (guidedTutorialOpen && guidedStep === 4) {
@@ -1886,7 +1901,7 @@ function Home({
                 {isAdmin ? (
                   <button
                     ref={importMenuItemRef}
-                    className={`menu-item ${guidedTutorialOpen && guidedStep === 1 ? "tutorial-target-pulse" : ""}`}
+                    className="menu-item"
                     onClick={handleImportClick}
                     title="CSV/XLSX에서 재고를 일괄 추가합니다(로그 미생성)"
                   >
@@ -1922,7 +1937,11 @@ function Home({
             )}
           </div>
 
-          <button ref={logsNavButtonRef} className="btn btn-secondary" onClick={() => navigate("/logs")}>
+          <button
+            ref={logsNavButtonRef}
+            className={`btn btn-secondary ${guideHighlightTarget === "logs-filter-or-export" ? "guide-highlight-target" : ""}`}
+            onClick={() => navigate("/logs")}
+          >
             📘 기록
           </button>
           <button
@@ -2159,10 +2178,11 @@ function Home({
         </div>
       )}
 
-      {(guideFloatingState.guideOpen || guideFloatingState.checklistOpen) && (
-        <div className={`guide-floating-dock ${guideFloatingState.guideOpen ? "guide-open" : ""} ${guideFloatingState.checklistOpen ? "checklist-open" : ""}`}>
-          {shouldRenderChecklist && (
-            <aside className="guide-checklist-panel" aria-label="실전 체험 체크리스트">
+      <GuideFloatingDock
+        guideOpen={guideFloatingState.guideOpen}
+        checklistOpen={guideFloatingState.checklistOpen}
+        checklistSlot={shouldRenderChecklist ? (
+          <aside className="guide-checklist-panel" aria-label="실전 체험 체크리스트">
               <div className="guide-checklist-head">
                 <strong>체크리스트</strong>
                 <button className="btn btn-ghost btn-compact" onClick={() => setGuidePanelOpen((v) => !v)}>
@@ -2193,10 +2213,10 @@ function Home({
                 </ul>
               )}
             </aside>
-          )}
+          ) : null}
 
-          {guidedTutorialOpen && (
-            <div className="guided-coach" role="status" aria-live="polite">
+        coachSlot={guidedTutorialOpen ? (
+          <div className="guided-coach" role="status" aria-live="polite">
           <div className="guided-coach-title">🎯 실전 체험 가이드 {guidedStep + 1}/{GUIDE_STEPS.length}</div>
           <p><strong>{GUIDE_STEPS[guidedStep]?.title}</strong></p>
           <p>{GUIDE_STEPS[guidedStep]?.todo}</p>
@@ -2227,10 +2247,9 @@ function Home({
               </button>
             )}
           </div>
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        ) : null}
+      />
 
 
       <footer className="site-footer">
@@ -2269,6 +2288,7 @@ function LogsPage({ logs, setLogs }) {
   const persistRuntime = React.useCallback((updater) => {
     setRuntime((prev) => {
       const candidate = typeof updater === "function" ? updater(prev) : updater;
+      if (isSameRuntime(prev, next)) return prev;
       const next = normalizeGuideRuntime(candidate);
       saveGuideRuntime(next);
       return next;
@@ -2295,6 +2315,8 @@ function LogsPage({ logs, setLogs }) {
     return () => window.removeEventListener("dokkebi-guide-runtime-updated", reloadRuntime);
   }, []);
 
+  const logsGuidePreparedRef = useRef(false);
+
   useEffect(() => {
     // 스킵 상태에선 runtime 잔여값이 있어도 Logs 자동 코치를 띄우지 않는다.
     if (isGuideAutoStartBlocked(onboardingState)) {
@@ -2308,25 +2330,27 @@ function LogsPage({ logs, setLogs }) {
           suppressAutoActionOnce: false,
         }));
       }
+      logsGuidePreparedRef.current = false;
       return;
     }
-    // guide에 의해 step 1로 진입한 경우에만 Logs 코치를 강제로 보장한다.
-    // step 2 이상 진행 중 runtime을 step 1로 덮어쓰면 Home 체인이 끊기므로 방지한다.
-    if (location?.state?.fromGuide || (runtime.open && runtime.step === 1)) {
-      persistRuntime((prev) => ({
-        ...prev,
-        open: true,
-        step: 1,
-        engaged: true,
-        pendingAction: "logs-filter-or-export",
-        guideTransitioningTo: "logs",
-        sourceRoute: prev?.sourceRoute || "/",
-        returnRoute: prev?.returnRoute || "/",
-      }));
-      setUserFilterExpanded(true);
-      setAutoCollapsed(false);
-    }
-  }, [location?.state, onboardingState, runtime.open, runtime.step, runtime.pendingAction, runtime.guideTransitioningTo, persistRuntime]);
+
+    const shouldForceLogsStep = !!location?.state?.fromGuide || (runtime.open && runtime.step === 1);
+    if (!shouldForceLogsStep || logsGuidePreparedRef.current) return;
+
+    logsGuidePreparedRef.current = true;
+    persistRuntime((prev) => ({
+      ...prev,
+      open: true,
+      step: 1,
+      engaged: true,
+      pendingAction: "logs-filter-or-export",
+      guideTransitioningTo: "logs",
+      sourceRoute: prev?.sourceRoute || "/",
+      returnRoute: prev?.returnRoute || "/",
+    }));
+    setUserFilterExpanded(true);
+    setAutoCollapsed(false);
+  }, [location?.key, location?.state?.fromGuide, onboardingState, runtime.open, runtime.step, runtime.pendingAction, runtime.guideTransitioningTo, persistRuntime]);
 
   const isMobileLike = () => window.matchMedia("(max-width: 1100px)").matches;
 
@@ -2697,36 +2721,39 @@ function LogsPage({ logs, setLogs }) {
         </>
       )}
 
-      {logsGuideOpen && (
-        <div className="guided-coach" role="status" aria-live="polite">
-          <div className="guided-coach-title">🎯 실전 체험 가이드 2/6</div>
-          <p><strong>2) 로그 페이지 핵심</strong></p>
-          <p>필터 위치 확인 버튼은 안내 전용입니다. 필터 펼침/접기 또는 내보내기 메뉴·실행 1회가 완료 조건입니다.</p>
-          <div className="tutorial-actions">
-            <button className="btn btn-secondary" onClick={() => { setUserFilterExpanded(true); setAutoCollapsed(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-              필터 위치 확인
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={() => {
-                if (runtime?.stepStates?.[1] !== "done") {
-                  toast("필터 토글 또는 내보내기를 먼저 1회 실행해 주세요.");
-                  return;
-                }
-                persistRuntime((prev) => buildAdvancedRuntime(prev, 1, { route: "home", nextPendingAction: "search-result-click" }));
-                navigate("/");
-              }}
-            >
-              다음 단계
-            </button>
-            {(!firstForcedGuideInLogs || runtime?.engaged) && (
-              <button className="btn btn-ghost" onClick={() => { persistRuntime((prev) => ({ ...prev, open: false, step: 1, engaged: prev?.engaged })); }}>
-                닫기
+      <GuideFloatingDock
+        guideOpen={logsGuideOpen}
+        coachSlot={
+          <div className="guided-coach" role="status" aria-live="polite">
+            <div className="guided-coach-title">🎯 실전 체험 가이드 2/6</div>
+            <p><strong>2) 로그 페이지 핵심</strong></p>
+            <p>필터 위치 확인 버튼은 안내 전용입니다. 필터 펼침/접기 또는 내보내기 메뉴·실행 1회가 완료 조건입니다.</p>
+            <div className="tutorial-actions">
+              <button className="btn btn-secondary" onClick={() => { setUserFilterExpanded(true); setAutoCollapsed(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                필터 위치 확인
               </button>
-            )}
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  if (runtime?.stepStates?.[1] !== "done") {
+                    toast("필터 토글 또는 내보내기를 먼저 1회 실행해 주세요.");
+                    return;
+                  }
+                  persistRuntime((prev) => buildAdvancedRuntime(prev, 1, { route: "home", nextPendingAction: "search-result-click" }));
+                  navigate("/");
+                }}
+              >
+                다음 단계
+              </button>
+              {(!firstForcedGuideInLogs || runtime?.engaged) && (
+                <button className="btn btn-ghost" onClick={() => { persistRuntime((prev) => ({ ...prev, open: false, step: 1, engaged: prev?.engaged })); }}>
+                  닫기
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        }
+      />
     </main>
   );
 }

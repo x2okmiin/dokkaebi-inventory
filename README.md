@@ -193,6 +193,15 @@ npm run ud -- 1.6.0 "chore(release): v1.6.0"
 
 ## 변경 이력
 
+**2026-03-16 · v1.6.0-beta.6 hotfix**
+
+* 가이드 오버레이 렌더링 지점을 `guide-floating-dock` 공통 슬롯으로 통합해 Home/Logs에서 동일한 mount 책임을 사용하도록 정리하고, Logs 페이지 코치가 화면 밖으로 밀리는 문제를 구조적으로 수정
+* Logs 가이드 강제 보장 effect에 1회 준비 가드를 추가하고 runtime 동등성 비교를 도입해 동일 step 상태를 반복 저장하던 루프성 갱신(중복 팝업 체감 원인)을 차단
+* 첫 진입 시 허브 팝업(`tutorialOpen`)과 코치(`guidedTutorialOpen`)가 동시에 노출되지 않도록 초기 복구 정책을 정리해 단계 중복 노출을 완화
+* 단계별 하이라이트 피드백을 `guide-highlight-target`으로 통합하고, 테스트 잔재였던 `.tutorial-target-pulse` 의존을 제거
+* 장소/전체 카드 확대보기 헤더 버튼의 커서를 `pointer`로 명확화하고 hover/focus-visible 인터랙션 피드백을 강화
+
+
 **2026-03-16 · v1.6.0-beta.6**
 
 * 가이드 상태 전이를 beta.6 컨트롤러 유틸(`buildStepStatesWithDone`, `buildAdvancedRuntime`)로 통합해 Home/Logs 간 step 진행 책임 충돌을 줄임
