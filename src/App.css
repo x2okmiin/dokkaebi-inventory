@@ -965,6 +965,29 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
 .guided-coach p{ margin:6px 0 8px; }
 .guided-coach ul{ margin:6px 0 10px 18px; }
 .guided-coach .btn{ margin-right:6px; }
+
+/* beta.4 실전 체험 가이드 3층 구조: 체크리스트 패널 */
+.guide-checklist-panel{
+  position: fixed;
+  left: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 990;
+  width: min(320px, 86vw);
+  border-radius: 12px;
+  border: 1px solid rgba(136,167,255,.35);
+  background: rgba(8,15,36,.94);
+  padding: 10px;
+  box-shadow: 0 8px 22px rgba(0,0,0,.3);
+}
+.guide-checklist-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.guide-checklist-panel ul{ list-style:none; margin:0; padding:0; max-height: 42vh; overflow:auto; }
+.guide-check-item{
+  width:100%; display:flex; gap:8px; text-align:left; align-items:center;
+  padding:8px; margin-bottom:6px; border-radius:10px;
+  border:1px solid rgba(136,167,255,.25); background:#0a1634; color:var(--text);
+}
+.guide-check-item.is-current{ border-color:#53ffe9; box-shadow:0 0 0 1px rgba(83,255,233,.18) inset; }
+
 /* ===== v1.6.0-beta.2: 모바일 스크롤/온보딩/로그 필터 UX 보강 ===== */
 /*
   이 블록은 기존 스타일을 대체하지 않고 "회귀 없이 덮어쓰기" 방식으로 동작한다.
@@ -1032,6 +1055,12 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
     right: 12px;
     bottom: calc(12px + env(safe-area-inset-bottom));
     max-width: none;
+  }
+  .guide-checklist-panel{
+    left: 12px;
+    right: 12px;
+    width: auto;
+    bottom: calc(170px + env(safe-area-inset-bottom));
   }
 }
 
