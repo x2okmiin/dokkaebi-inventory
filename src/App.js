@@ -41,9 +41,9 @@ const APP_BUILD_INFO =
   localStorage.getItem("do-kkae-bi-build-info") ||
   "local";
 const ADMIN_PASSWORD = "2513";
-const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.4";
+const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.5";
 const GUIDE_RUNTIME_KEY = "do-kkae-bi-onboarding-runtime-v1";
-const GUIDE_VERSION = "1.6.0-beta.4";
+const GUIDE_VERSION = "1.6.0-beta.5";
 const GUIDE_STEP_COUNT = 6;
 
 /**
@@ -107,7 +107,7 @@ function clearGuideRuntime() {
 function getOnboardingState() {
   try {
     const raw = localStorage.getItem(GUIDE_STORAGE_KEY);
-    if (!raw) return { seen: false, status: "new", ts: null, completedSteps: [] };
+    if (!raw) return { seen: false, status: "new", ts: null, completedSteps: [], autoStartBlocked: false, dismissedUntilManualReopen: false };
     const parsed = JSON.parse(raw);
     return {
       seen: !!parsed?.seen,
@@ -115,13 +115,15 @@ function getOnboardingState() {
       reopenedAt: parsed?.reopenedAt || null,
       ts: parsed?.ts || null,
       completedSteps: Array.isArray(parsed?.completedSteps) ? parsed.completedSteps : [],
+      autoStartBlocked: !!parsed?.autoStartBlocked,
+      dismissedUntilManualReopen: !!parsed?.dismissedUntilManualReopen,
     };
   } catch {
-    return { seen: false, status: "new", ts: null, completedSteps: [] };
+    return { seen: false, status: "new", ts: null, completedSteps: [], autoStartBlocked: false, dismissedUntilManualReopen: false };
   }
 }
 
-function markOnboardingSeen(status = "completed", completedSteps = []) {
+  const blockAutoStart = status === "skipped";
   try {
     localStorage.setItem(
       GUIDE_STORAGE_KEY,
@@ -130,11 +132,14 @@ function markOnboardingSeen(status = "completed", completedSteps = []) {
         status,
         ts: new Date().toISOString(),
         completedSteps,
+        // 스킵은 "자동 재등장 금지" 의미를 분명히 남긴다.
+        // beta.6 이후 상태 확장 시에도 이 플래그를 기준으로 자동 시작 여부를 판정한다.
+        autoStartBlocked: blockAutoStart,
+        dismissedUntilManualReopen: blockAutoStart,
         version: GUIDE_VERSION,
       })
     );
   } catch {}
-}
 
 function markOnboardingReopened() {
   try {
@@ -144,12 +149,19 @@ function markOnboardingReopened() {
       JSON.stringify({
         ...prev,
         seen: true,
-        status: prev.status || "completed",
+        status: prev.status === "skipped" ? "reopened" : (prev.status || "completed"),
+        autoStartBlocked: false,
+        dismissedUntilManualReopen: false,
         reopenedAt: new Date().toISOString(),
         version: GUIDE_VERSION,
       })
     );
   } catch {}
+}
+
+function isGuideAutoStartBlocked(state) {
+  // "skipped" 또는 명시 차단 플래그가 있으면 자동 시작/자동 재개를 모두 막는다.
+  return state?.status === "skipped" || !!state?.autoStartBlocked || !!state?.dismissedUntilManualReopen;
 }
 
 
@@ -713,12 +725,25 @@ function Home({
   function skipUnifiedGuide() {
     if (firstForcedGuide && guideEngaged) return;
     markOnboardingSeen("skipped", guideStepStates);
+    // 스킵은 "자동 시작 차단"이므로 잔여 runtime 상태를 정리한다.
+    saveGuideRuntime({
+      ...getGuideRuntime(),
+      open: false,
+      panelOpen: false,
+      engaged: false,
+      pendingAction: "",
+      guideTransitioningTo: "",
+      suppressAutoActionOnce: false,
+      pausedOnRoute: "",
+      stepStates: guideStepStates,
+    });
     clearGuideRuntime();
     setOnboardingMeta(getOnboardingState());
     setTutorialOpen(false);
     setGuidedTutorialOpen(false);
     setGuideEngaged(false);
     setGuidePanelOpen(false);
+    setGuidePendingAction("");
     toast("가이드는 건너뛰었어요. 상단 '🧭 가이드' 버튼에서 언제든 다시 볼 수 있습니다.");
   }
 
@@ -855,6 +880,7 @@ function Home({
 
   const applyRuntimeToHome = React.useCallback((state, rawRuntime) => {
     const runtime = normalizeGuideRuntime(rawRuntime);
+    const autoStartBlocked = isGuideAutoStartBlocked(state);
     setOnboardingMeta(state);
     setFirstForcedGuide(!state.seen);
     setGuideStepStates(runtime.stepStates);
@@ -867,6 +893,25 @@ function Home({
       setGuidedTutorialOpen(!!runtime.open);
       setGuidedStep(runtime.step || 0);
       setGuideEngaged(!!runtime.engaged);
+      return;
+    }
+
+    // 스킵 후엔 자동 가이드를 완전히 막고, 수동 재오픈(상단 버튼)만 허용한다.
+    if (autoStartBlocked) {
+      setTutorialOpen(false);
+      setGuidedTutorialOpen(false);
+      setGuidePanelOpen(false);
+      setGuideEngaged(false);
+      if (runtime.open || runtime.pendingAction || runtime.guideTransitioningTo) {
+        saveGuideRuntime({
+          ...runtime,
+          open: false,
+          panelOpen: false,
+          pendingAction: "",
+          guideTransitioningTo: "",
+          suppressAutoActionOnce: false,
+        });
+      }
       return;
     }
 
@@ -887,6 +932,7 @@ function Home({
 
   useEffect(() => {
     if (!guidedTutorialOpen) return;
+    if (isGuideAutoStartBlocked(getOnboardingState())) return;
     const currentRuntime = getGuideRuntime();
     // 핵심 규칙: Home 복귀 시에는 가이드를 이어서 보여주되 step action 자동 재실행(= /logs 강제 점프)은 1회 차단한다.
     if (currentRuntime.suppressAutoActionOnce) {
@@ -1813,9 +1859,23 @@ function Home({
           <button ref={logsNavButtonRef} className="btn btn-secondary" onClick={() => navigate("/logs")}>
             📘 기록
           </button>
-          <button className="btn btn-ghost" onClick={() => { markOnboardingReopened(); setOnboardingMeta(getOnboardingState()); setFirstForcedGuide(false); setGuideEngaged(false); setGuideHubUnlocked(true); setTutorialOpen(true); }}>
-
-            🧭 가이드 {onboardingMeta.seen ? (onboardingMeta.status === "completed" ? "(완료)" : "(스킵됨)") : "(필수 1회)"}
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              // 수동 재오픈은 skip 차단을 해제하는 유일한 진입점이다.
+              markOnboardingReopened();
+              setOnboardingMeta(getOnboardingState());
+              setFirstForcedGuide(false);
+              setGuideEngaged(false);
+              setGuideHubUnlocked(true);
+              setTutorialOpen(true);
+              setGuidedTutorialOpen(false);
+              setGuidePanelOpen(false);
+              setGuidePendingAction("");
+              saveGuideRuntime({ ...getGuideRuntime(), open: false, panelOpen: false, pendingAction: "", guideTransitioningTo: "" });
+            }}
+          >
+            🧭 가이드 {onboardingMeta.seen ? (onboardingMeta.status === "completed" ? "(완료)" : onboardingMeta.status === "skipped" ? "(스킵됨)" : "(재오픈)") : "(필수 1회)"}
           </button>
 
           {(isAdmin || (userId && userName)) && (
@@ -1987,7 +2047,7 @@ function Home({
         <div className="overlay" onClick={() => setTutorialOpen(false)}>
           <div className="popup glass neon-rise tutorial-popup" onClick={(e) => e.stopPropagation()}>
             <div className="popup-head">
-              <h3 className="popup-title">v1.6.0-beta.4 실전 체험 가이드 허브</h3>
+              <h3 className="popup-title">v1.6.0-beta.5 실전 체험 가이드 허브</h3>
               {(guideHubUnlocked || !firstForcedGuide) && (
                 <button className="btn btn-ghost" onClick={() => setTutorialOpen(false)}>닫기</button>
               )}
@@ -2145,6 +2205,17 @@ function LogsPage({ logs, setLogs }) {
   const logsGuideOpen = !!runtime?.open && runtime?.step === 1;
   const firstForcedGuideInLogs = !onboardingState.seen;
 
+  const completeLogsGuideStep = React.useCallback((reason = "") => {
+    // step 2 완료 기준(beta.5): 필터 "위치 확인" 스크롤은 제외하고,
+    // 실제 조작(필터 토글 / 내보내기 메뉴 열기 / CSV·Excel 실행)만 완료로 인정한다.
+    if (!(runtime?.open && runtime?.step === 1)) return;
+    const alreadyDone = runtime?.stepStates?.[1] === "done";
+    const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => runtime?.stepStates?.[idx] || "idle");
+    safeStates[1] = "done";
+    persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "" }));
+    if (!alreadyDone && reason) toast.success(reason);
+  }, [runtime, persistRuntime]);
+
   useEffect(() => {
     // Logs는 Router prop snapshot 대신 session runtime을 직접 구독해 stale guide 상태를 피한다.
     const reloadRuntime = () => setRuntime(normalizeGuideRuntime(getGuideRuntime()));
@@ -2154,6 +2225,20 @@ function LogsPage({ logs, setLogs }) {
   }, []);
 
   useEffect(() => {
+    // 스킵 상태에선 runtime 잔여값이 있어도 Logs 자동 코치를 띄우지 않는다.
+    if (isGuideAutoStartBlocked(onboardingState)) {
+      if (runtime.open || runtime.pendingAction || runtime.guideTransitioningTo) {
+        persistRuntime((prev) => ({
+          ...prev,
+          open: false,
+          panelOpen: false,
+          pendingAction: "",
+          guideTransitioningTo: "",
+          suppressAutoActionOnce: false,
+        }));
+      }
+      return;
+    }
     // guide에 의해 진입한 경우(또는 step 1 runtime) 팝업을 강제로 보장한다.
     if (location?.state?.fromGuide || (runtime.open && runtime.step === 1)) {
       persistRuntime((prev) => ({
@@ -2169,7 +2254,7 @@ function LogsPage({ logs, setLogs }) {
       setUserFilterExpanded(true);
       setAutoCollapsed(false);
     }
-  }, [location?.state, runtime.open, runtime.step, persistRuntime]);
+  }, [location?.state, onboardingState, runtime.open, runtime.step, runtime.pendingAction, runtime.guideTransitioningTo, persistRuntime]);
 
   const isMobileLike = () => window.matchMedia("(max-width: 1100px)").matches;
 
@@ -2268,12 +2353,7 @@ function LogsPage({ logs, setLogs }) {
       return next;
     });
 
-    if (runtime?.open && runtime?.step === 1) {
-      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => runtime?.stepStates?.[idx] || "idle");
-      safeStates[1] = "done";
-      persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "" }));
-      toast.success("[가이드] 로그 필터 조작을 확인했어요.");
-    }
+    completeLogsGuideStep("[가이드] 로그 필터 펼침/접기 조작을 확인했어요.");
   };
   function formatLabel(d) {
     const diff = Math.floor((new Date() - new Date(d)) / (1000 * 60 * 60 * 24));
@@ -2448,7 +2528,10 @@ function LogsPage({ logs, setLogs }) {
           <div className="menu-wrap" ref={menuRef}>
             <button
               className="btn btn-secondary"
-              onClick={() => setExportOpen((v) => !v)}
+              onClick={() => {
+                setExportOpen((v) => !v);
+                completeLogsGuideStep("[가이드] 내보내기 메뉴 열기를 확인했어요.");
+              }}
               aria-haspopup="menu"
               aria-expanded={exportOpen}
             >
@@ -2461,11 +2544,7 @@ function LogsPage({ logs, setLogs }) {
                   onClick={() => {
                     exportCSV();
                     setExportOpen(false);
-                    if (runtime?.open && runtime?.step === 1) {
-                      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => runtime?.stepStates?.[idx] || "idle");
-                      safeStates[1] = "done";
-                      persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "" }));
-                    }
+                    completeLogsGuideStep("[가이드] CSV 내보내기 실행을 확인했어요.");
                   }}
                 >
                   📄 CSV 내보내기
@@ -2475,11 +2554,7 @@ function LogsPage({ logs, setLogs }) {
                   onClick={() => {
                     exportExcel();
                     setExportOpen(false);
-                    if (runtime?.open && runtime?.step === 1) {
-                      const safeStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => runtime?.stepStates?.[idx] || "idle");
-                      safeStates[1] = "done";
-                      persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "" }));
-                    }
+                    completeLogsGuideStep("[가이드] Excel 내보내기 실행을 확인했어요.");
                   }}
                 >
                   📑 Excel 내보내기
@@ -2551,7 +2626,7 @@ function LogsPage({ logs, setLogs }) {
         <div className="guided-coach" role="status" aria-live="polite">
           <div className="guided-coach-title">🎯 실전 체험 가이드 2/6</div>
           <p><strong>2) 로그 페이지 핵심</strong></p>
-          <p>필터/내보내기 UI를 직접 확인한 뒤 다음 단계로 진행해 주세요.</p>
+          <p>필터 위치 확인 버튼은 안내 전용입니다. 필터 펼침/접기 또는 내보내기 메뉴·실행 1회가 완료 조건입니다.</p>
           <div className="tutorial-actions">
             <button className="btn btn-secondary" onClick={() => { setUserFilterExpanded(true); setAutoCollapsed(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
               필터 위치 확인
@@ -2806,6 +2881,21 @@ export default function AppWrapper() {
   }, [inventory]);
 
   // 10분 무활동 자동 로그아웃(관리자만)
+  useEffect(() => {
+    const syncGuideBodyClass = () => {
+      const rt = normalizeGuideRuntime(getGuideRuntime());
+      const shouldSet = !!rt.open;
+      document.body.classList.toggle("guide-open", shouldSet);
+    };
+    syncGuideBodyClass();
+    window.addEventListener("dokkebi-guide-runtime-updated", syncGuideBodyClass);
+    window.addEventListener("storage", syncGuideBodyClass);
+    return () => {
+      document.body.classList.remove("guide-open");
+      window.removeEventListener("dokkebi-guide-runtime-updated", syncGuideBodyClass);
+      window.removeEventListener("storage", syncGuideBodyClass);
+    };
+  }, []);
   useEffect(() => {
     if (!isAdmin) return;
     const LOGOUT_AFTER = 10 * 60 * 1000;

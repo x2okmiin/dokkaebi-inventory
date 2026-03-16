@@ -1044,26 +1044,57 @@ body::-webkit-scrollbar-thumb:hover { box-shadow:0 0 18px rgba(83,255,233,.6); }
   }
 }
 
-/* 하단 가이드 + 토스트 겹침 방지 */
+/* 하단 가이드 + 토스트 배치 전략(beta.5)
+   - 핵심: z-index가 아니라 "물리적 위치 분리"로 충돌을 방지한다.
+   - 기본: 가이드 코치=하단 좌측, 토스트=하단 우측
+   - 모바일: 가이드 코치=하단 전체폭, 토스트=상단 중앙
+   - guide-open 클래스가 켜지면 토스트를 위쪽으로 더 띄워 버튼 가림을 예방한다. */
+:root {
+  --guide-coach-bottom: calc(16px + env(safe-area-inset-bottom));
+  --guide-coach-left: 16px;
+  --guide-coach-right: auto;
+  --guide-coach-max-w: min(420px, 42vw);
+  --guide-checklist-bottom: calc(14px + env(safe-area-inset-bottom));
+  --toast-offset-bottom: calc(14px + env(safe-area-inset-bottom));
+}
+
 .guided-coach {
-  bottom: calc(14px + env(safe-area-inset-bottom));
+  left: var(--guide-coach-left);
+  right: var(--guide-coach-right);
+  bottom: var(--guide-coach-bottom);
+  max-width: var(--guide-coach-max-w);
   z-index: 1000;
 }
+
+.guide-checklist-panel {
+  left: 14px;
+  bottom: var(--guide-checklist-bottom);
+}
+
+.app-toaster {
+  z-index: 1200;
+}
+
+body.guide-open .app-toaster {
+  bottom: calc(var(--toast-offset-bottom) + 78px);
+}
+
 @media (max-width: 720px) {
-  .guided-coach {
-    left: 12px;
-    right: 12px;
-    bottom: calc(12px + env(safe-area-inset-bottom));
-    max-width: none;
+  :root {
+    --guide-coach-left: 12px;
+    --guide-coach-right: 12px;
+    --guide-coach-bottom: calc(12px + env(safe-area-inset-bottom));
+    --guide-coach-max-w: none;
   }
+
   .guide-checklist-panel{
     left: 12px;
     right: 12px;
     width: auto;
     bottom: calc(170px + env(safe-area-inset-bottom));
   }
-}
-
-.app-toaster {
-  z-index: 1400;
+  body.guide-open .app-toaster {
+    bottom: auto;
+    top: calc(10px + env(safe-area-inset-top));
+  }
 }
