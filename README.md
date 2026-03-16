@@ -193,6 +193,15 @@ npm run ud -- 1.6.0 "chore(release): v1.6.0"
 
 ## 변경 이력
 
+**2026-03-16 · v1.6.0-beta.6**
+
+* 가이드 상태 전이를 beta.6 컨트롤러 유틸(`buildStepStatesWithDone`, `buildAdvancedRuntime`)로 통합해 Home/Logs 간 step 진행 책임 충돌을 줄임
+* Logs step 2 완료 후 Home 복귀 시 step 3(검색 이동)로 이어지도록 back/popstate/다음단계 저장 로직을 단일 정책으로 정리
+* Home 자동 액션에서 Logs 전용 step(2단계)을 재실행하지 않도록 차단해 `/logs` 재진입 루프와 돌아가기 먹통 현상을 완화
+* 체크리스트 패널/가이드 코치/토스트를 `guide-floating-dock` 슬롯 레이아웃으로 재배치해 상호 겹침을 구조적으로 방지
+* 스토리지 키/문서/패키지 버전을 `1.6.0-beta.6`으로 동기화하고 기존 runtime 키는 유지해 이어하기 호환성을 보존
+
+
 **2026-03-16 · v1.6.0-beta.5**
 
 * beta.4 가이드 런타임을 안정화해 로그 2단계 완료 조건을 단일 처리 함수로 통합(필터 토글/내보내기 메뉴 열기/CSV·Excel 실행)하고, 완료 후 다음 단계 이동 신뢰성을 개선
