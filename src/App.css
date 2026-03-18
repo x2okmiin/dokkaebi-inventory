@@ -1099,3 +1099,40 @@ body.checklist-open .app-toaster {
   .guide-floating-dock.compact{ inset: auto 10px calc(8px + env(safe-area-inset-bottom)) 10px; }
   .logs-page.logs-guide-active{ padding-bottom: clamp(180px, 28vh, 260px); }
 }
+/* ===== v1.6.0-beta.8 guide UX redesign ===== */
+.guide-intro-popup,
+.guide-complete-popup{
+  width:min(560px, 92vw);
+}
+.guide-intro-popup .popup-body,
+.guide-complete-popup .popup-body{
+  display:grid;
+  gap:12px;
+}
+.logout-guide-anchor{
+  position:relative;
+  display:inline-flex;
+}
+.logout-guide-tooltip{
+  position:absolute;
+  top:calc(100% + 10px);
+  right:0;
+  width:min(320px, 78vw);
+  z-index:30;
+  border-radius:14px;
+  padding:12px 14px;
+  background:rgba(8,15,36,.96);
+  box-shadow:0 18px 40px rgba(0,0,0,.35);
+}
+.logout-guide-tooltip p{ margin:8px 0 0; }
+.guide-complete-popup ul{
+  margin:0;
+  padding-left:18px;
+  color:#cfe2ff;
+}
+.guide-complete-popup li{ margin:6px 0; }
+.guide-floating-dock .guide-checklist-head .muted.small{ margin-left:auto; }
+@media (max-width: 960px){
+  .logout-guide-anchor{ display:flex; width:100%; justify-content:flex-end; }
+  .logout-guide-tooltip{ right:0; left:auto; width:min(340px, calc(100vw - 32px)); }
+}
