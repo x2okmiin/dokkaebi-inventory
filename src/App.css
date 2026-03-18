@@ -1073,3 +1073,29 @@ body.checklist-open .app-toaster {
   .guide-floating-dock .guide-checklist-panel{ order: 1; }
   .guide-floating-dock .guided-coach{ order: 2; }
 }
+
+.guide-feedback-target{ position:relative; }
+.guide-feedback-target.mode-border,
+.guide-feedback-target.mode-focus{
+  border-color: rgba(83,255,233,.88) !important;
+  box-shadow: 0 0 0 2px rgba(83,255,233,.28), 0 0 22px rgba(83,255,233,.35) !important;
+}
+.guide-feedback-target.mode-pulse{ animation: guide-feedback-pulse 1.25s ease-in-out infinite; }
+@keyframes guide-feedback-pulse{
+  0%,100%{ transform: translateY(0); box-shadow: 0 0 0 0 rgba(83,255,233,.35); }
+  50%{ transform: translateY(-1px); box-shadow: 0 0 0 5px rgba(83,255,233,.08); }
+}
+.guide-policy-panel{ border: 1px solid rgba(83,255,233,.45); margin-bottom: 10px; }
+.guide-check-item{ transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
+.guide-check-item:hover{ transform: translateY(-1px); }
+.guide-check-item.is-current{ box-shadow:0 0 0 1px rgba(83,255,233,.22) inset, 0 0 18px rgba(83,255,233,.2); }
+
+.logs-page.logs-guide-active{ padding-bottom: clamp(220px, 22vh, 280px); }
+.guide-floating-dock.compact{
+  grid-template-columns: minmax(280px, 420px);
+  justify-content: end;
+}
+@media (max-width: 960px){
+  .guide-floating-dock.compact{ inset: auto 10px calc(8px + env(safe-area-inset-bottom)) 10px; }
+  .logs-page.logs-guide-active{ padding-bottom: clamp(180px, 28vh, 260px); }
+}
