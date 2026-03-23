@@ -1136,3 +1136,108 @@ body.checklist-open .app-toaster {
   .logout-guide-anchor{ display:flex; width:100%; justify-content:flex-end; }
   .logout-guide-tooltip{ right:0; left:auto; width:min(340px, calc(100vw - 32px)); }
 }
+
+/* ===== v1.6.0-beta.9 stabilization ===== */
+.guide-mode-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:72px;
+  padding:4px 10px;
+  border-radius:999px;
+  font-size:12px;
+  color:#06111f;
+  background:linear-gradient(135deg, rgba(83,255,233,.95), rgba(136,167,255,.92));
+  box-shadow:0 8px 18px rgba(83,255,233,.24);
+}
+.guide-feedback-hint{
+  margin:4px 0 10px;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid rgba(83,255,233,.3);
+  background:rgba(10,22,52,.76);
+  color:#dff9ff;
+  line-height:1.45;
+}
+.guide-checklist-panel{
+  box-shadow:0 12px 32px rgba(0,0,0,.34), 0 0 0 1px rgba(136,167,255,.08) inset;
+}
+.guide-check-item{
+  position:relative;
+  min-height:46px;
+}
+.guide-check-item::after{
+  content:"해야 할 동작 확인";
+  position:absolute;
+  top:8px;
+  right:10px;
+  font-size:11px;
+  color:#8fb7ff;
+  opacity:.72;
+}
+.guide-check-item.is-current::after{
+  content:"지금 이 단계";
+  color:#53ffe9;
+  opacity:1;
+}
+.guided-coach{
+  border:1px solid rgba(83,255,233,.34);
+  box-shadow:0 18px 40px rgba(0,0,0,.36), 0 0 0 1px rgba(83,255,233,.12) inset;
+}
+.guide-highlight-target,
+.guide-feedback-target.mode-border,
+.guide-feedback-target.mode-focus{
+  position:relative;
+}
+.guide-highlight-target::after,
+.guide-feedback-target.mode-border::after,
+.guide-feedback-target.mode-focus::after{
+  content:"가이드 대상";
+  position:absolute;
+  top:-10px;
+  right:10px;
+  padding:2px 8px;
+  border-radius:999px;
+  background:#53ffe9;
+  color:#041019;
+  font-size:11px;
+  font-weight:700;
+}
+.logs-page .guide-checklist-panel{
+  border-color:rgba(83,255,233,.4);
+  background:rgba(6,13,30,.97);
+}
+.logs-page.logs-guide-active .toolbar-logs{
+  margin-bottom:14px;
+}
+.logout-guide-tooltip::before{
+  content:"모바일은 길게 누르거나 버튼을 한 번 탭해 안내를 열어주세요.";
+  display:block;
+  margin-bottom:8px;
+  color:#9fd4ff;
+  font-size:12px;
+}
+@media (max-width: 960px){
+  .guide-floating-dock{
+    gap:8px;
+    --dock-bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+  .guided-coach,
+  .guide-checklist-panel{
+    padding:10px;
+  }
+  .guide-checklist-panel ul{
+    max-height:min(24vh, 220px);
+  }
+  .logs-page .guide-checklist-panel{
+    position:relative;
+  }
+  .logs-page .guide-checklist-head{
+    gap:6px;
+    flex-wrap:wrap;
+  }
+  .logout-guide-tooltip{
+    top:auto;
+    bottom:calc(100% + 10px);
+  }
+}

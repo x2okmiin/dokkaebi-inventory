@@ -30,6 +30,7 @@ React 기반 드론 재고·입출고 관리 콘솔
 - [Firebase 설정](#firebase-설정)
 - [빌드 & 배포](#빌드--배포)
 - [테스트 체크리스트](#테스트-체크리스트)
+- [릴리즈 게이트](#릴리즈-게이트)
 - [장애 · 디버깅](#장애--디버깅)
 - [FAQ](#faq)
 - [운영 원칙](#운영-원칙)
@@ -160,7 +161,19 @@ npm run ud -- 1.6.0 "chore(release): v1.6.0"
 7. 일괄 추가(베타): 합산·초기화 모드 모두 확인, 로그 미생성
 8. Firebase 저장: 키 살균 경고만, 오류 없음
 9. 모바일: 카드 스크롤/로그아웃 버튼 표시
-10. 자동 로그아웃: 10분 무활동 시 동작
+10. 자동 로그아웃: 10분 무활동 시 동작|
+11. beta.9 가이드: Home↔Logs 이동, 새로고침, 뒤로가기 후 step / checklist / coach 유지
+12. beta.9 정책: completed 이후 skip 비노출, 재오픈 시 review 모드 유지
+
+## 릴리즈 게이트
+
+정식 `1.6.0` 전에는 아래 게이트를 반드시 다시 수동 확인한다. 상세 단계는 [`docs/RELEASE-CHECKLIST.md`](docs/RELEASE-CHECKLIST.md) 참고.
+
+- Home↔Logs 반복 이동 후에도 guide runtime / checklist / coach가 초기화되지 않을 것
+- completed 상태 이후 skip이 다시 상태를 덮어쓰지 않을 것
+- 처음 쓰는 사람이 step 1~5를 설명 없이 따라갈 수 있을 정도로 피드백이 충분할 것
+- 모바일에서 logs toolbar / guide dock / popup / toast가 겹치지 않을 것
+- 일괄 추가 + 30분 백업 복구 + 자동 로그아웃 안내 + 첫 동기화 흐름이 회귀하지 않을 것
 
 ---
 
@@ -193,6 +206,13 @@ npm run ud -- 1.6.0 "chore(release): v1.6.0"
 ---
 
 ## 변경 이력
+
+**2026-03-23 · v1.6.0-beta.9**
+
+* Home/Logs 가이드 진행 상태를 `GUIDE_RUNTIME_KEY` 단일 세션 흐름으로 재정리해 라우트 이동·새로고침·뒤로가기 이후에도 step/checklist/coach가 이어지도록 안정화
+* 온보딩 상태를 `first-visit / prompted / in-progress / dismissed / skipped / completed / replay`로 명시하고 completed 이후 skip 금지, 재오픈 시 review-only 정책을 코드에 반영
+* 각 단계 coach 문장을 더 직접적으로 수정하고 `가이드 대상` 배지, 힌트 박스, Logs checklist 존재감을 강화해 초보자 피드백을 보강
+* 정식 1.6.0 직전 검증을 위해 release gate 문서(`docs/RELEASE-CHECKLIST.md`)를 추가하고 README/.welcome/package 버전을 beta.9로 동기화
 
 **2026-03-18 · v1.6.0-beta.8**
 

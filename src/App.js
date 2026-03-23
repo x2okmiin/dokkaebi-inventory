@@ -41,10 +41,37 @@ const APP_BUILD_INFO =
   localStorage.getItem("do-kkae-bi-build-info") ||
   "local";
 const ADMIN_PASSWORD = "2513";
-const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.8";
-const GUIDE_RUNTIME_KEY = "do-kkae-bi-onboarding-runtime-v1";
-const GUIDE_VERSION = "1.6.0-beta.8";
+const GUIDE_STORAGE_KEY = "do-kkae-bi-onboarding-v1.6.0-beta.9";
+const GUIDE_RUNTIME_KEY = "do-kkae-bi-onboarding-runtime-v2";
+const GUIDE_VERSION = "1.6.0-beta.9";
 const GUIDE_STEP_COUNT = 5;
+const GUIDE_STATUS = Object.freeze({
+  FIRST_VISIT: "first-visit",
+  PROMPTED: "prompted",
+  IN_PROGRESS: "in-progress",
+  DISMISSED: "dismissed",
+  SKIPPED: "skipped",
+  COMPLETED: "completed",
+  REPLAY: "replay",
+});
+
+/**
+ * beta.9 guide state policy (release gate)
+ * - first-visit -> prompted -> in-progress -> dismissed/skipped/completed
+ * - dismissed -> manual reopen -> in-progress
+ * - skipped -> manual reopen -> replay
+ * - completed -> replay only (skip 금지, auto prompt 금지)
+ * - route 이동/Home<->Logs/refresh/back-forward는 GUIDE_RUNTIME_KEY 단일 세션 흐름으로 복구
+ */
+const GUIDE_TRANSITION_RULES = Object.freeze({
+  [GUIDE_STATUS.FIRST_VISIT]: [GUIDE_STATUS.PROMPTED, GUIDE_STATUS.SKIPPED],
+  [GUIDE_STATUS.PROMPTED]: [GUIDE_STATUS.IN_PROGRESS, GUIDE_STATUS.SKIPPED, GUIDE_STATUS.DISMISSED],
+  [GUIDE_STATUS.IN_PROGRESS]: [GUIDE_STATUS.DISMISSED, GUIDE_STATUS.SKIPPED, GUIDE_STATUS.COMPLETED],
+  [GUIDE_STATUS.DISMISSED]: [GUIDE_STATUS.IN_PROGRESS, GUIDE_STATUS.REPLAY],
+  [GUIDE_STATUS.SKIPPED]: [GUIDE_STATUS.REPLAY],
+  [GUIDE_STATUS.COMPLETED]: [GUIDE_STATUS.REPLAY],
+  [GUIDE_STATUS.REPLAY]: [GUIDE_STATUS.DISMISSED, GUIDE_STATUS.COMPLETED],
+});
 
 /**
  * beta.6 guide controller helpers
@@ -95,22 +122,59 @@ function buildAdvancedRuntime(prevRuntime, fromStep, {
  *   이 값은 "영구 완료 여부"(GUIDE_STORAGE_KEY)와 분리한다.
  *   완료/스킵 여부는 GUIDE_STORAGE_KEY, 진행 중 임시 상태는 GUIDE_RUNTIME_KEY.
  */
+const DEFAULT_ONBOARDING_STATE = Object.freeze({
+  seen: false,
+  status: GUIDE_STATUS.FIRST_VISIT,
+  ts: null,
+  reopenedAt: null,
+  completedSteps: [],
+  autoStartBlocked: false,
+  dismissedUntilManualReopen: false,
+  version: GUIDE_VERSION,
+});
+
+const DEFAULT_GUIDE_RUNTIME = Object.freeze({
+  open: false,
+  step: 0,
+  engaged: false,
+  panelOpen: false,
+  pendingAction: "open-location-card",
+  introOpen: false,
+  completionOpen: false,
+  stepStates: Array.from({ length: GUIDE_STEP_COUNT }, () => "idle"),
+  suppressAutoActionOnce: false,
+  pausedOnRoute: "",
+  guideTransitioningTo: "",
+  sourceRoute: "/",
+  returnRoute: "/",
+  resumeAllowed: true,
+  closedByUser: false,
+  completed: false,
+  manualReopenRequested: false,
+  completedAt: null,
+  closedAt: null,
+  reviewMode: false,
+  status: GUIDE_STATUS.FIRST_VISIT,
+  feedbackMessage: "",
+  version: GUIDE_VERSION,
+});
 function getGuideRuntime() {
   try {
     const raw = sessionStorage.getItem(GUIDE_RUNTIME_KEY);
     if (!raw) return normalizeGuideRuntime({});
     return normalizeGuideRuntime(JSON.parse(raw));
   } catch {
-    return normalizeGuideRuntime({});
+    return normalizeGuideRuntime(DEFAULT_GUIDE_RUNTIME);
   }
 }
 
-function normalizeGuideRuntime(runtime = {}) {
+function normalizeGuideRuntime(runtime = DEFAULT_GUIDE_RUNTIME) {
   const safeStepStates = Array.from({ length: GUIDE_STEP_COUNT }, (_, idx) => {
     const v = runtime?.stepStates?.[idx];
     return ["idle", "waiting-action", "done", "skipped"].includes(v) ? v : "idle";
   });
   return {
+    ...DEFAULT_GUIDE_RUNTIME,
     open: !!runtime?.open,
     step: Number.isFinite(runtime?.step) ? Math.max(0, Math.min(GUIDE_STEP_COUNT - 1, runtime.step)) : 0,
     engaged: !!runtime?.engaged,
@@ -131,6 +195,10 @@ function normalizeGuideRuntime(runtime = {}) {
     manualReopenRequested: !!runtime?.manualReopenRequested,
     completedAt: runtime?.completedAt || null,
     closedAt: runtime?.closedAt || null,
+    reviewMode: !!runtime?.reviewMode,
+    status: Object.values(GUIDE_STATUS).includes(runtime?.status) ? runtime.status : GUIDE_STATUS.FIRST_VISIT,
+    feedbackMessage: runtime?.feedbackMessage || "",
+    version: runtime?.version || GUIDE_VERSION,
   };
 }
 
@@ -168,61 +236,69 @@ function GuideFloatingDock({ guideOpen, checklistOpen = false, checklistSlot = n
 function getOnboardingState() {
   try {
     const raw = localStorage.getItem(GUIDE_STORAGE_KEY);
-    if (!raw) return { seen: false, status: "new", ts: null, completedSteps: [], autoStartBlocked: false, dismissedUntilManualReopen: false };
+    if (!raw) return { ...DEFAULT_ONBOARDING_STATE };
     const parsed = JSON.parse(raw);
+    const safeStatus = Object.values(GUIDE_STATUS).includes(parsed?.status) ? parsed.status : GUIDE_STATUS.COMPLETED;
     return {
+      ...DEFAULT_ONBOARDING_STATE,
       seen: !!parsed?.seen,
-      status: parsed?.status || "completed",
+      status: safeStatus,
       reopenedAt: parsed?.reopenedAt || null,
       ts: parsed?.ts || null,
       completedSteps: Array.isArray(parsed?.completedSteps) ? parsed.completedSteps : [],
       autoStartBlocked: !!parsed?.autoStartBlocked,
       dismissedUntilManualReopen: !!parsed?.dismissedUntilManualReopen,
+      version: parsed?.version || GUIDE_VERSION,
     };
   } catch {
-    return { seen: false, status: "new", ts: null, completedSteps: [], autoStartBlocked: false, dismissedUntilManualReopen: false };
+    return { ...DEFAULT_ONBOARDING_STATE };
   }
 }
 
-function markOnboardingSeen(status = "completed", completedSteps = []) {
-  const blockAutoStart = ["skipped", "completed", "dismissed", "closed"].includes(status);
+function saveOnboardingState(nextState = {}) {
+  const prev = getOnboardingState();
+  const requestedStatus = Object.values(GUIDE_STATUS).includes(nextState?.status) ? nextState.status : prev.status;
+  const allowedTransitions = GUIDE_TRANSITION_RULES[prev.status] || [];
+  const status = requestedStatus === prev.status || !prev.seen || allowedTransitions.includes(requestedStatus) ? requestedStatus : prev.status;
+  const blockAutoStart = [GUIDE_STATUS.SKIPPED, GUIDE_STATUS.COMPLETED, GUIDE_STATUS.DISMISSED].includes(status);
+  const payload = {
+    ...prev,
+    ...nextState,
+    seen: nextState?.seen ?? true,
+    status,
+    autoStartBlocked: nextState?.autoStartBlocked ?? blockAutoStart,
+    dismissedUntilManualReopen: nextState?.dismissedUntilManualReopen ?? blockAutoStart,
+    version: GUIDE_VERSION,
+    ts: nextState?.ts || new Date().toISOString(),
+  };
   try {
-    localStorage.setItem(
-      GUIDE_STORAGE_KEY,
-      JSON.stringify({
-        seen: true,
-        status,
-        ts: new Date().toISOString(),
-        completedSteps,
-        autoStartBlocked: blockAutoStart,
-        dismissedUntilManualReopen: blockAutoStart,
-        version: GUIDE_VERSION,
-      })
-    );
+    localStorage.setItem(GUIDE_STORAGE_KEY, JSON.stringify(payload));
   } catch {}
+  return payload;
 }
 
-function markOnboardingReopened() {
-  try {
-    const prev = getOnboardingState();
-    localStorage.setItem(
-      GUIDE_STORAGE_KEY,
-      JSON.stringify({
-        ...prev,
-        seen: true,
-        status: prev.status === "skipped" ? "reopened" : (prev.status || "completed"),
-        autoStartBlocked: false,
-        dismissedUntilManualReopen: false,
-        reopenedAt: new Date().toISOString(),
-        version: GUIDE_VERSION,
-      })
-    );
-  } catch {}
+function markOnboardingSeen(status = GUIDE_STATUS.COMPLETED, completedSteps = []) {
+  return saveOnboardingState({ status, completedSteps });
+}
+
+function markOnboardingReopened(nextStatus = GUIDE_STATUS.REPLAY) {
+  return saveOnboardingState({
+    seen: true,
+    status: nextStatus,
+    autoStartBlocked: false,
+    dismissedUntilManualReopen: false,
+    reopenedAt: new Date().toISOString(),
+  });
 }
 
 function isGuideAutoStartBlocked(state) {
-  // "skipped" 또는 명시 차단 플래그가 있으면 자동 시작/자동 재개를 모두 막는다.
-  return state?.status === "skipped" || !!state?.autoStartBlocked || !!state?.dismissedUntilManualReopen;
+  return [GUIDE_STATUS.SKIPPED, GUIDE_STATUS.COMPLETED, GUIDE_STATUS.DISMISSED].includes(state?.status) || !!state?.autoStartBlocked || !!state?.dismissedUntilManualReopen;
+}
+
+function canShowSkip(onboardingState, runtimeState) {
+  if ([GUIDE_STATUS.COMPLETED, GUIDE_STATUS.REPLAY].includes(onboardingState?.status)) return false;
+  if (runtimeState?.completed || runtimeState?.reviewMode) return false;
+  return true;
 }
 
 
@@ -590,6 +666,7 @@ function Home({
           guideTransitioningTo: "logs",
           suppressAutoActionOnce: false,
           pausedOnRoute: "",
+          status: GUIDE_STATUS.IN_PROGRESS,
         });
         const stepStates = [...preparedRuntime.stepStates];
         if (stepStates[2] !== "done") stepStates[2] = "waiting-action";
@@ -751,6 +828,9 @@ function Home({
     checklistOpen: shouldRenderChecklist,
   }), [guidedTutorialOpen, shouldRenderChecklist]);
   const guideHighlightTarget = guidedTutorialOpen ? guidePendingAction : "";
+  const activeGuideRuntime = normalizeGuideRuntime(getGuideRuntime());
+  const canSkipCurrentGuide = canShowSkip(onboardingMeta, activeGuideRuntime);
+  const guideModeLabel = activeGuideRuntime.reviewMode || onboardingMeta.status === GUIDE_STATUS.COMPLETED || onboardingMeta.status === GUIDE_STATUS.REPLAY ? "복습 모드" : "실전 진행";
 
   function setGuideStepState(step, state) {
     setGuideStepStates((prev) => {
@@ -792,11 +872,11 @@ function Home({
 
   function getFeedbackByPendingAction(action = "") {
     const map = {
-      "open-location-card": { target: "location-card", mode: "pulse", label: "장소 카드" },
-      "search-result-click": { target: "search-input", mode: "pulse", label: "검색창" },
-      "logs-filter-or-export": { target: "logs-button", mode: "border", label: "기록 버튼" },
-      "open-data-menu": { target: "data-menu", mode: "pulse", label: "데이터 메뉴" },
-      "auth-policy-check": { target: "auth-policy", mode: "focus", label: "자동 로그아웃 정책" },
+      "open-location-card": { target: "location-card", mode: "pulse", label: "장소 카드", help: "장소 카드 또는 전체 카드 확대보기를 열어야 이 단계가 완료돼요." },
+      "search-result-click": { target: "search-input", mode: "pulse", label: "검색창", help: "검색어만 입력하면 아직 미완료예요. 결과 목록에서 실제 항목을 눌러 위치 이동까지 해야 합니다." },
+      "logs-filter-or-export": { target: "logs-button", mode: "border", label: "기록 버튼", help: "기록 페이지에서 필터를 접거나 펼치거나, 내보내기 메뉴를 한 번 실행해야 완료됩니다." },
+      "open-data-menu": { target: "data-menu", mode: "pulse", label: "데이터 메뉴", help: "데이터 메뉴를 열어 일괄 추가·백업 복구 위치를 확인하면 완료돼요." },
+      "auth-policy-check": { target: "auth-policy", mode: "focus", label: "자동 로그아웃 정책", help: "로그아웃 버튼 근처 정책 안내를 열어서 읽으면 마지막 단계가 완료됩니다." },
     };
     return map[action] || { target: "", mode: "pulse", label: "" };
   }
@@ -811,7 +891,8 @@ function Home({
     if (reason) toast.success(reason);
   }
 
-  function startGuideExperience(step = 0) {
+  function startGuideExperience(step = 0, options = {}) {
+    const reviewMode = !!options.reviewMode || [GUIDE_STATUS.COMPLETED, GUIDE_STATUS.REPLAY].includes(onboardingMeta.status);
     setTutorialOpen(false);
     setGuidedTutorialOpen(true);
     setGuideHubUnlocked(true);
@@ -824,8 +905,11 @@ function Home({
     setLogoutTouchedInGuide(step !== 4);
     setGuideIntroOpen(false);
     setGuideCompletionOpen(false);
-    setGuideFeedback(getFeedbackByPendingAction(GUIDE_STEPS[step]?.completeBy || ""));
-    saveGuideRuntime({ ...getGuideRuntime(), open: true, introOpen: false, completionOpen: false, resumeAllowed: true, closedByUser: false, completed: false, manualReopenRequested: true });
+    const feedback = getFeedbackByPendingAction(GUIDE_STEPS[step]?.completeBy || "");
+    setGuideFeedback(feedback);
+    const nextStatus = reviewMode ? GUIDE_STATUS.REPLAY : GUIDE_STATUS.IN_PROGRESS;
+    saveOnboardingState({ status: nextStatus, completedSteps: guideStepStates, autoStartBlocked: false, dismissedUntilManualReopen: false });
+    saveGuideRuntime({ ...getGuideRuntime(), open: true, introOpen: false, completionOpen: false, resumeAllowed: true, closedByUser: false, completed: false, manualReopenRequested: true, reviewMode, status: nextStatus, feedbackMessage: feedback.help || "" });
     setDataMenuOpen(false);
     setTimeout(() => GUIDE_STEPS[step]?.action?.(), 120);
   }
@@ -839,7 +923,9 @@ function Home({
       setAuthPolicyVisible(true);
       setLogoutTouchedInGuide(false);
     }
-    setGuideFeedback(getFeedbackByPendingAction(target.completeBy || ""));
+    const feedback = getFeedbackByPendingAction(target.completeBy || "");
+    setGuideFeedback(feedback);
+    saveGuideRuntime({ ...getGuideRuntime(), feedbackMessage: feedback.help || "", pendingAction: target.completeBy || "", reviewMode: activeGuideRuntime.reviewMode, status: activeGuideRuntime.reviewMode ? GUIDE_STATUS.REPLAY : GUIDE_STATUS.IN_PROGRESS });
     target.action();
   }
 
@@ -849,7 +935,7 @@ function Home({
     const baseRuntime = { ...runtime, stepStates: currentStates };
     const nextStep = Math.min(fromStep + 1, GUIDE_STEP_COUNT - 1);
     const nextPendingAction = GUIDE_STEPS[nextStep]?.completeBy || "";
-    const nextRuntime = buildAdvancedRuntime(baseRuntime, fromStep, { route: "home", nextPendingAction });
+    const nextRuntime = { ...buildAdvancedRuntime(baseRuntime, fromStep, { route: "home", nextPendingAction }), status: activeGuideRuntime.reviewMode ? GUIDE_STATUS.REPLAY : GUIDE_STATUS.IN_PROGRESS, reviewMode: activeGuideRuntime.reviewMode, feedbackMessage: getFeedbackByPendingAction(nextPendingAction)?.help || "" };
     saveGuideRuntime(nextRuntime);
     setGuideStepStates(nextRuntime.stepStates);
     setGuidedTutorialOpen(true);
@@ -865,8 +951,12 @@ function Home({
 
 
   function skipUnifiedGuide() {
+    if (!canSkipCurrentGuide) {
+      toast("완료한 가이드는 스킵할 수 없어요. 필요하면 복습 모드로 다시 보세요.");
+      return;
+    }
     if (firstForcedGuide && guideEngaged) return;
-    markOnboardingSeen("skipped", guideStepStates);
+    markOnboardingSeen(GUIDE_STATUS.SKIPPED, guideStepStates);
     // 스킵은 "자동 시작 차단"이므로 잔여 runtime 상태를 정리한다.
     saveGuideRuntime({
       ...getGuideRuntime(),
@@ -892,13 +982,13 @@ function Home({
 
   function nextGuidedStep() {
     if (guideStepStates[guidedStep] !== "done") {
-      toast("현재 단계의 실제 동작을 먼저 완료해 주세요.");
+      toast(guideFeedback?.help || "현재 단계의 실제 동작을 먼저 완료해 주세요.");
       return;
     }
     if (guidedStep >= GUIDE_STEPS.length - 1) {
       closeGuideExperience("completed");
       setDataMenuOpen(false);
-      markOnboardingSeen("completed", guideStepStates);
+      markOnboardingSeen(GUIDE_STATUS.COMPLETED, guideStepStates);
       setOnboardingMeta(getOnboardingState());
       setGuideCompletionOpen(true);
       toast.success("가이드를 완료했습니다. 운영 주의사항을 확인해 주세요.");
@@ -1019,16 +1109,17 @@ function Home({
     setOnboardingMeta(state);
     setFirstForcedGuide(!state.seen);
     setGuideStepStates(runtime.stepStates);
+    const feedback = getFeedbackByPendingAction(runtime.pendingAction || "open-location-card");
+    setGuideFeedback(feedback);
     setGuidePanelOpen(!!runtime.panelOpen);
     setGuidePendingAction(runtime.pendingAction || "open-location-card");
     setGuideIntroOpen(!!runtime.introOpen && !runtime.open);
     setGuideCompletionOpen(!!runtime.completionOpen);
 
-    if (!state.seen) {
-      setTutorialOpen(!runtime.open);
-      setGuideIntroOpen(!runtime.open && !runtime.completed);
-      setGuideIntroOpen(false);
+    if (!state.seen || state.status === GUIDE_STATUS.FIRST_VISIT || state.status === GUIDE_STATUS.PROMPTED) {
+      if (state.status === GUIDE_STATUS.FIRST_VISIT) saveOnboardingState({ seen: false, status: GUIDE_STATUS.PROMPTED, autoStartBlocked: false, dismissedUntilManualReopen: false });
       setTutorialOpen(false);
+      setGuideIntroOpen(!runtime.open && !runtime.completed);
       setGuideHubUnlocked(!!runtime.engaged);
       setGuidedTutorialOpen(!!runtime.open);
       setGuidedStep(runtime.step || 0);
@@ -1120,8 +1211,11 @@ function Home({
       resumeAllowed: prev.resumeAllowed,
       closedByUser: prev.closedByUser,
       completed: prev.completed,
+      reviewMode: prev.reviewMode,
+      status: prev.status,
+      feedbackMessage: guideFeedback?.help || prev.feedbackMessage || "",
     });
-  }, [guidedTutorialOpen, guidedStep, guideEngaged, guidePanelOpen, guidePendingAction, guideStepStates]);
+  }, [guidedTutorialOpen, guidedStep, guideEngaged, guidePanelOpen, guidePendingAction, guideStepStates, guideFeedback?.help]);
 
   useEffect(() => {
     setGuideFeedback(getFeedbackByPendingAction(guidePendingAction));
@@ -2034,8 +2128,8 @@ function Home({
           <button
             className="btn btn-ghost"
             onClick={() => {
-              // 수동 재오픈은 skip 차단을 해제하는 유일한 진입점이다.
-              markOnboardingReopened();
+              const nextManualStatus = onboardingMeta.status === GUIDE_STATUS.COMPLETED ? GUIDE_STATUS.REPLAY : GUIDE_STATUS.IN_PROGRESS;
+              markOnboardingReopened(nextManualStatus);
               setOnboardingMeta(getOnboardingState());
               setFirstForcedGuide(false);
               setGuideEngaged(false);
@@ -2046,10 +2140,10 @@ function Home({
               setGuidedTutorialOpen(false);
               setGuidePanelOpen(false);
               setGuidePendingAction("");
-              saveGuideRuntime({ ...getGuideRuntime(), open: false, panelOpen: false, pendingAction: "", guideTransitioningTo: "", resumeAllowed: true, closedByUser: false, completed: false, manualReopenRequested: true });
+              saveGuideRuntime({ ...getGuideRuntime(), open: false, panelOpen: false, pendingAction: "", guideTransitioningTo: "", resumeAllowed: true, closedByUser: false, completed: onboardingMeta.status === GUIDE_STATUS.COMPLETED, reviewMode: onboardingMeta.status === GUIDE_STATUS.COMPLETED, status: onboardingMeta.status === GUIDE_STATUS.COMPLETED ? GUIDE_STATUS.REPLAY : GUIDE_STATUS.IN_PROGRESS, manualReopenRequested: true });
             }}
           >
-            🧭 가이드 {onboardingMeta.seen ? (onboardingMeta.status === "completed" ? "(완료)" : onboardingMeta.status === "skipped" ? "(스킵됨)" : onboardingMeta.status === "dismissed" ? "(닫힘)" : "(재오픈)") : "(필수 1회)"}
+            🧭 가이드 {onboardingMeta.seen ? (onboardingMeta.status === GUIDE_STATUS.COMPLETED ? "(완료·복습 가능)" : onboardingMeta.status === GUIDE_STATUS.REPLAY ? "(복습 중)" : onboardingMeta.status === GUIDE_STATUS.SKIPPED ? "(스킵됨)" : onboardingMeta.status === GUIDE_STATUS.DISMISSED ? "(닫힘)" : "(진행 중)") : "(필수 1회)"}
           </button>
 
           {(isAdmin || (userId && userName)) && (
@@ -2300,13 +2394,13 @@ function Home({
         <div className="overlay" onClick={() => setTutorialOpen(false)}>
           <div className="popup glass neon-rise tutorial-popup" onClick={(e) => e.stopPropagation()}>
             <div className="popup-head">
-              <h3 className="popup-title">v1.6.0-beta.8 가이드 허브</h3>
+              <h3 className="popup-title">v1.6.0-beta.9 가이드 허브</h3>
               {(guideHubUnlocked || !firstForcedGuide) && (
                 <button className="btn btn-ghost" onClick={() => setTutorialOpen(false)}>닫기</button>
               )}
             </div>
             <div className="popup-body">
-              <p className="muted">허브는 재실행/복습용 보조 UI입니다. 첫 진입은 별도 안내 팝업에서 시작하고, 총 5단계 실전 체험으로 진행됩니다.</p>
+              <p className="muted">허브는 재실행/복습용 보조 UI입니다. beta.9에서는 Home↔Logs 이동, 새로고침, 뒤로가기 이후에도 같은 체크리스트 흐름을 이어가도록 안정화했습니다.</p>
               {GUIDE_STEPS.map((step, idx) => (
                 <button
                   key={step.title}
@@ -2333,12 +2427,14 @@ function Home({
                   <li>재오픈 시에는 원하는 단계만 골라 빠르게 복습할 수 있습니다.</li>
                 </ul>
                 <div className="tutorial-actions">
-                  <button className="btn btn-secondary" type="button" onClick={() => startGuideExperience(guidedStep || 0)}>
-                    🎮 5단계 체험 시작
+                  <button className="btn btn-secondary" type="button" onClick={() => startGuideExperience(guidedStep || 0, { reviewMode: onboardingMeta.status === GUIDE_STATUS.COMPLETED || onboardingMeta.status === GUIDE_STATUS.REPLAY })}>
+                    {onboardingMeta.status === GUIDE_STATUS.COMPLETED || onboardingMeta.status === GUIDE_STATUS.REPLAY ? "🔁 복습 시작" : "🎮 5단계 체험 시작"}
                   </button>
-                  <button className="btn btn-ghost" type="button" onClick={skipUnifiedGuide} disabled={!(!firstForcedGuide || !guideEngaged)}>
-                    이번만 스킵
-                  </button>
+                  {canSkipCurrentGuide && (
+                    <button className="btn btn-ghost" type="button" onClick={skipUnifiedGuide} disabled={!(!firstForcedGuide || !guideEngaged)}>
+                      이번만 스킵
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -2352,7 +2448,7 @@ function Home({
         checklistSlot={shouldRenderChecklist ? (
           <aside className="guide-checklist-panel" aria-label="실전 체험 체크리스트">
               <div className="guide-checklist-head">
-                <strong>체크리스트</strong>
+                <strong>체크리스트</strong><span className="guide-mode-badge">{guideModeLabel}</span>
                 <button className="btn btn-ghost btn-compact" onClick={() => setGuidePanelOpen((v) => !v)}>
                   {guidePanelOpen ? "접기" : "펼치기"}
                 </button>
@@ -2388,7 +2484,8 @@ function Home({
           <div className="guided-coach-title">🎯 실전 체험 가이드 {guidedStep + 1}/{GUIDE_STEPS.length}</div>
           <p><strong>{GUIDE_STEPS[guidedStep]?.title}</strong></p>
           <p>{GUIDE_STEPS[guidedStep]?.todo}</p>
-          <p className="muted small">진행률: {doneCount}/{GUIDE_STEPS.length} 완료</p>
+          <p className="muted small">진행률: {doneCount}/{GUIDE_STEPS.length} 완료 · {guideModeLabel}</p>
+          {guideFeedback?.help && <p className="guide-feedback-hint">💡 {guideFeedback.help}</p>}
           <div className="tutorial-actions">
             <button className="btn btn-secondary" onClick={() => runGuideAction(guidedStep)}>
               {GUIDE_STEPS[guidedStep]?.actionLabel || "위치로 이동"}
@@ -2400,7 +2497,7 @@ function Home({
               {guidedStep >= GUIDE_STEPS.length - 1 ? "완료 팝업 보기" : "다음 단계"}
             </button>
             {(guideHubUnlocked || !firstForcedGuide) && (
-              <button className="btn btn-ghost" onClick={() => { markOnboardingSeen("dismissed", guideStepStates); closeGuideExperience("closed"); setOnboardingMeta(getOnboardingState()); }}>
+              <button className="btn btn-ghost" onClick={() => { markOnboardingSeen(GUIDE_STATUS.DISMISSED, guideStepStates); closeGuideExperience("closed"); setOnboardingMeta(getOnboardingState()); }}>
                 닫기
               </button>
             )}
@@ -2454,6 +2551,8 @@ function LogsPage({ logs, setLogs }) {
     });
   }, []);
   const logsGuideOpen = !!runtime?.open && runtime?.step === 2;
+  const logsGuideVisible = logsGuideOpen || (!!runtime?.panelOpen && runtime?.stepStates?.some((s) => s === "done" || s === "waiting-action"));
+  const logsDoneCount = runtime?.stepStates?.filter((s) => s === "done").length || 0;
   const firstForcedGuideInLogs = !onboardingState.seen;
 
   const completeLogsGuideStep = React.useCallback((reason = "") => {
@@ -2462,7 +2561,7 @@ function LogsPage({ logs, setLogs }) {
     if (!(runtime?.open && runtime?.step === 2)) return;
     const alreadyDone = runtime?.stepStates?.[2] === "done";
     const safeStates = buildStepStatesWithDone(runtime?.stepStates, 2);
-    persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "" }));
+    persistRuntime((prev) => ({ ...prev, stepStates: safeStates, pendingAction: "", feedbackMessage: "기록 페이지 단계가 완료되었어요. 홈으로 돌아가 다음 단계를 이어가세요." }));
     if (!alreadyDone && reason) toast.success(reason);
   }, [runtime, persistRuntime]);
 
@@ -2722,7 +2821,7 @@ function LogsPage({ logs, setLogs }) {
   }
 
   return (
-    <main className={`stage main logs-page ${logsGuideOpen ? "logs-guide-active" : ""}`}>
+    <main className={`stage main logs-page ${logsGuideVisible ? "logs-guide-active" : ""}`}>
       <FixedBg src={`${process.env.PUBLIC_URL}/DRONE_SOCCER_DOKKEBI2-Photoroom.png`} overlay="rgba(0,0,0,.22)" />
       <NeonBackdrop />
 
@@ -2881,11 +2980,11 @@ function LogsPage({ logs, setLogs }) {
 
       <GuideFloatingDock
         guideOpen={logsGuideOpen}
-        checklistOpen={logsGuideOpen}
+        checklistOpen={logsGuideVisible}
         compact
         checklistSlot={(
           <aside className="guide-checklist-panel" aria-label="실전 체험 체크리스트">
-            <div className="guide-checklist-head"><strong>체크리스트</strong><span className="muted small">3/5 진행 중</span></div>
+            <div className="guide-checklist-head"><strong>체크리스트</strong><span className="guide-mode-badge">{runtime?.reviewMode ? "복습" : "진행"}</span><span className="muted small">{logsDoneCount}/{GUIDE_STEP_COUNT} 완료</span></div>
             <ul>
               {LOGS_GUIDE_STEPS.map((title, idx) => (
                 <li key={`logs-panel-${title}`}>
@@ -2901,6 +3000,7 @@ function LogsPage({ logs, setLogs }) {
         coachSlot={
           <div className="guided-coach" role="status" aria-live="polite">
             <div className="guided-coach-title">🎯 실전 체험 가이드 3/5</div>
+            <p className="guide-feedback-hint">💡 {runtime?.feedbackMessage || "필터를 접거나 펼치거나, 내보내기 메뉴를 한 번 실행하면 이 단계가 완료돼요."}</p>
             <p><strong>3) 기록 페이지 확인</strong></p>
             <p>필터 펼침/접기 또는 내보내기 메뉴·실행 1회가 완료 조건입니다. 완료 후 홈으로 돌아가 다음 단계를 이어갑니다.</p>
             <div className="tutorial-actions">
@@ -2911,7 +3011,7 @@ function LogsPage({ logs, setLogs }) {
                 className="btn btn-primary"
                 onClick={() => {
                   if (runtime?.stepStates?.[2] !== "done") {
-                    toast("필터 토글 또는 내보내기를 먼저 1회 실행해 주세요.");
+                    toast(runtime?.feedbackMessage || "필터 토글 또는 내보내기를 먼저 1회 실행해 주세요.");
                     return;
                   }
                   persistRuntime((prev) => buildAdvancedRuntime(prev, 2, { route: "home", nextPendingAction: "open-data-menu" }));
@@ -2921,7 +3021,7 @@ function LogsPage({ logs, setLogs }) {
                 다음 단계
               </button>
               {(!firstForcedGuideInLogs || runtime?.engaged) && (
-                <button className="btn btn-ghost" onClick={() => { markOnboardingSeen("dismissed", runtime?.stepStates || []); persistRuntime((prev) => ({ ...prev, open: false, panelOpen: false, engaged: false, pendingAction: "", resumeAllowed: false, closedByUser: true, manualReopenRequested: false })); }}>
+                <button className="btn btn-ghost" onClick={() => { markOnboardingSeen(GUIDE_STATUS.DISMISSED, runtime?.stepStates || []); persistRuntime((prev) => ({ ...prev, open: false, panelOpen: false, engaged: false, pendingAction: "", resumeAllowed: false, closedByUser: true, manualReopenRequested: false, status: prev.reviewMode ? GUIDE_STATUS.REPLAY : GUIDE_STATUS.DISMISSED })); }}>
                   닫기
                 </button>
               )}
